@@ -68,7 +68,7 @@ Convert SQL statement to mongo statement.
   fmt.Println(string(pipeline))
 ```
 
-more usage see [converter_test](https://github.com/tsfans/sql-to-mongo/converter/converter_test)
+more usage see [converter_test](https://github.com/tsfans/sql-to-mongo/blob/main/converter/converter_test.go)
 
 ## Support SQL syntax
 
