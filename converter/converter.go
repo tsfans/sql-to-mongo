@@ -1,6 +1,6 @@
 package converter
 
-import "github.com/tsfans/sql_to_mongo/parser"
+import "github.com/tsfans/sql-to-mongo/parser"
 
 type SelectConverter interface {
 	// 转化为目标查询语句

@@ -8,7 +8,7 @@ import (
 
 	"github.com/pingcap/tidb/parser/opcode"
 	log "github.com/sirupsen/logrus"
-	"github.com/tsfans/sql_to_mongo/parser"
+	"github.com/tsfans/sql-to-mongo/parser"
 	"go.mongodb.org/mongo-driver/bson"
 	"golang.org/x/exp/maps"
 )

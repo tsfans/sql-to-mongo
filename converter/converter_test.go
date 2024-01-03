@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/tsfans/sql_to_mongo/parser"
+	"github.com/tsfans/sql-to-mongo/parser"
 )
 
 var (

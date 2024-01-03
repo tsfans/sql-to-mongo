@@ -1,4 +1,4 @@
-module github.com/tsfans/sql_to_mongo
+module github.com/tsfans/sql-to-mongo
 
 go 1.21.4
 
