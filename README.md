@@ -15,61 +15,73 @@ Convert SQL statement to mongo statement.
 ### Example
 
 ```shell
-  go get github.com/tsfans/sql-to-mongo@v1.0.2
+  go get github.com/tsfans/sql-to-mongo@v1.0.3
 ```
 
 ```go
-  // define table schema so we can validate columns
-  tableSchema := map[string][]*parser.Column{
+  package main
+
+  import (
+ "encoding/json"
+ "fmt"
+
+ "github.com/tsfans/sql-to-mongo/converter"
+ "github.com/tsfans/sql-to-mongo/parser"
+)
+
+func main() {
+ // define table schema so we can validate columns
+ tableSchema := map[string][]*parser.Column{
   "student": {
-    {Type: parser.Int, Name: "id"},
-    {Type: parser.Datetime, Name: "createdAt"},
-    {Type: parser.Datetime, Name: "updatedAt"},
-    {Type: parser.String, Name: "stuId"},
-    {Type: parser.String, Name: "name"},
-    {Type: parser.Int, Name: "age"},
-    {Type: parser.String, Name: "gender"},
-    {Type: parser.Boolean, Name: "foreign"},
-    {Type: parser.Datetime, Name: "entryDate"},
-    {Type: parser.String, Name: "grade"},
-    {Type: parser.Int, Name: "class"},
-   },
-  }
+   {Type: parser.Int, Name: "id"},
+   {Type: parser.Datetime, Name: "createdAt"},
+   {Type: parser.Datetime, Name: "updatedAt"},
+   {Type: parser.String, Name: "stuId"},
+   {Type: parser.String, Name: "name"},
+   {Type: parser.Int, Name: "age"},
+   {Type: parser.String, Name: "gender"},
+   {Type: parser.Boolean, Name: "foreign"},
+   {Type: parser.Datetime, Name: "entryDate"},
+   {Type: parser.String, Name: "grade"},
+   {Type: parser.Int, Name: "class"},
+  },
+ }
 
-  sql := "select id, name from student where age > 18"
-  // create new parser to parse SQL
-  sqlParser := parser.NewMySQLSelectParser(sql, tableSchema)
-  // parse SQL to AST, and validate sementic
-  sql, err := sqlParser.Parse()
-  if err != nil {
-    panic(err)
-  }
+ selectSql := "select id, name from student where age > 18"
+ // create new parser to parse SQL
+ sqlParser := parser.NewMySQLSelectParser(selectSql, tableSchema)
+ // parse SQL to AST, and validate sementic
+ sql, err := sqlParser.Parse()
+ if err != nil {
+  panic(err)
+ }
 
-  // define view so we can validate mongo query statement
-  sourceView := map[string]string{"student": "student"}
-  // create new converter to convert SQL to mongo statement
-  conv := NewMongoQueryConverter(sql, sourceView)
-  var query Query
-  // convert SQL to mongo statement
-  query, err = conv.Convert()
-  if err != nil {
-    panic(err)
-  }
+ // define view so we can validate mongo query statement
+ sourceView := map[string]string{"student": "student"}
+ // create new converter to convert SQL to mongo statement
+ conv := converter.NewMongoQueryConverter(sql, sourceView)
+ var query converter.Query
+ // convert SQL to mongo statement
+ query, err = conv.Convert()
+ if err != nil {
+  panic(err)
+ }
 
-  mongoQuery := query.(*MongoQuery)
+ mongoQuery := query.(*converter.MongoQuery)
 
-  // StartView use to start mongo arrge
-  fmt.Println(mongoQuery.StartView)
+ // StartView use to start mongo arrge
+ fmt.Println(mongoQuery.StartView)
 
-  // SelectFields represent final result fields
-  selectFields, _ := json.Marshal(mongoQuery.SelectFields)
-  fmt.Println(string(selectFields))
+ // SelectFields represent final result fields
+ selectFields, _ := json.Marshal(mongoQuery.SelectFields)
+ fmt.Println(string(selectFields))
 
-  // Pipeline use to execute mongo aggregate
-  // this example will print [{"$match":{"$expr":{"$gt":["$age",18]}}},{"$replaceRoot":{"newRoot":{"id":"$id","name":"$name"}}}]
-  // you can use it on mongo: db.student.aggregate([{"$match":{"$expr":{"$gt":["$age",18]}}},{"$replaceRoot":{"newRoot":{"id":"$id","name":"$name"}}}])
-  pipeline, _ := json.Marshal(mongoQuery.Pipeline)
-  fmt.Println(string(pipeline))
+ // Pipeline use to execute mongo aggregate
+ // this example will print [{"$match":{"$expr":{"$gt":["$age",18]}}},{"$replaceRoot":{"newRoot":{"id":"$id","name":"$name"}}}]
+ // you can use it on mongo: db.student.aggregate([{"$match":{"$expr":{"$gt":["$age",18]}}},{"$replaceRoot":{"newRoot":{"id":"$id","name":"$name"}}}])
+ pipeline, _ := json.Marshal(mongoQuery.Pipeline)
+ fmt.Println(string(pipeline))
+}
 ```
 
 more usage see [converter_test](https://github.com/tsfans/sql-to-mongo/blob/main/converter/converter_test.go)
