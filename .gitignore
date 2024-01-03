@@ -19,5 +19,4 @@
 
 # Go workspace file
 go.work
-*.sum
 *debug_bin*

@@ -14,6 +14,10 @@ Convert SQL statement to mongo statement.
 
 ### Example
 
+```shell
+  go get github.com/tsfans/sql-to-mongo@v1.0.2
+```
+
 ```go
   // define table schema so we can validate columns
   tableSchema := map[string][]*parser.Column{
