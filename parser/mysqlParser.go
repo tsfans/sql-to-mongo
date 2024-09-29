@@ -24,11 +24,11 @@ type MySQLSelectParser struct {
 
 type SQLSelect struct {
 	Distinct bool
-	Fields   []*SQLField
+	Fields   []ExprField
 	From     *SQLTable
-	Where    *BinaryOperation
-	GroupBy  []*SQLField
-	Having   *BinaryOperation
+	Where    ExprField
+	GroupBy  []ExprField
+	Having   ExprField
 	OrderBy  []*SQLOrderBy
 	Limit    *SQLLimit
 	SQL      *string
@@ -57,70 +57,187 @@ const (
 
 	SQLField_Type_WildCard_Value string = "*"
 
-	SQLFuncName_Sum   string = "SUM"
-	SQLFuncName_Avg   string = "AVG"
-	SQLFuncName_Count string = "COUNT"
-	SQLFuncName_Max   string = "MAX"
-	SQLFuncName_Min   string = "MIN"
+	SQLFuncName_Sum          string = "SUM"
+	SQLFuncName_Avg          string = "AVG"
+	SQLFuncName_Count        string = "COUNT"
+	SQLFuncName_Max          string = "MAX"
+	SQLFuncName_Min          string = "MIN"
+	SQLFuncName_Json_Arr_Agg string = "JSON_ARRAYAGG"
 
-	SQLFuncName_Json_Extract string = "JSON_EXTRACT"
-	SQLFuncName_Year         string = "YEAR"
-	SQLFuncName_Month        string = "MONTH"
-	SQLFuncName_Day          string = "DAY"
-	SQLFuncName_Hour         string = "HOUR"
-	SQLFuncName_Minute       string = "MINUTE"
-	SQLFuncName_Second       string = "SECOND"
-	SQLFuncName_Date_Format  string = "DATE_FORMAT"
-	SQLFuncName_Plus         string = "PLUS"
-	SQLFuncName_Minus        string = "MINUS"
-	SQLFuncName_Mul          string = "MUL"
-	SQLFuncName_Div          string = "DIV"
-	SQLFuncName_Round        string = "ROUND"
+	SQLFuncName_Json_Extract    string = "JSON_EXTRACT"
+	SQLFuncName_Year            string = "YEAR"
+	SQLFuncName_Month           string = "MONTH"
+	SQLFuncName_Day             string = "DAY"
+	SQLFuncName_Hour            string = "HOUR"
+	SQLFuncName_Minute          string = "MINUTE"
+	SQLFuncName_Second          string = "SECOND"
+	SQLFuncName_Date_Format     string = "DATE_FORMAT"
+	SQLFuncName_Round           string = "ROUND"
+	SQLFuncName_If              string = "IF"
+	SQLFuncName_Case            string = "CASE"
+	SQLFuncName_Now             string = "NOW"
+	SQLFuncName_To_Double       string = "TO_DOUBLE"
+	SQLFuncName_To_Floor        string = "FLOOR"
+	SQLFuncName_Substring_Index string = "SUBSTRING_INDEX"
 )
 
 var (
 	SQLFunc_Agg_Map = map[string]string{
-		SQLFuncName_Sum:   SQLFuncName_Sum,
-		SQLFuncName_Avg:   SQLFuncName_Avg,
-		SQLFuncName_Count: SQLFuncName_Count,
-		SQLFuncName_Max:   SQLFuncName_Max,
-		SQLFuncName_Min:   SQLFuncName_Min,
+		SQLFuncName_Sum:          SQLFuncName_Sum,
+		SQLFuncName_Avg:          SQLFuncName_Avg,
+		SQLFuncName_Count:        SQLFuncName_Count,
+		SQLFuncName_Max:          SQLFuncName_Max,
+		SQLFuncName_Min:          SQLFuncName_Min,
+		SQLFuncName_Json_Arr_Agg: SQLFuncName_Json_Arr_Agg,
 	}
 	SQLFunc_Map = map[string]string{
-		SQLFuncName_Json_Extract: SQLFuncName_Json_Extract,
-		SQLFuncName_Year:         SQLFuncName_Year,
-		SQLFuncName_Month:        SQLFuncName_Month,
-		SQLFuncName_Day:          SQLFuncName_Day,
-		SQLFuncName_Hour:         SQLFuncName_Hour,
-		SQLFuncName_Minute:       SQLFuncName_Minute,
-		SQLFuncName_Second:       SQLFuncName_Second,
-		SQLFuncName_Date_Format:  SQLFuncName_Date_Format,
-		SQLFuncName_Round:        SQLFuncName_Round,
-	}
-	SQLOperator_Map = map[opcode.Op]string{
-		opcode.Plus:  SQLFuncName_Plus,
-		opcode.Minus: SQLFuncName_Minus,
-		opcode.Mul:   SQLFuncName_Mul,
-		opcode.Div:   SQLFuncName_Div,
-	}
-	SQLOperator_Origin_Map = map[string]string{
-		SQLFuncName_Plus:  "+",
-		SQLFuncName_Minus: "-",
-		SQLFuncName_Mul:   "*",
-		SQLFuncName_Div:   "/",
+		SQLFuncName_Json_Extract:    SQLFuncName_Json_Extract,
+		SQLFuncName_Year:            SQLFuncName_Year,
+		SQLFuncName_Month:           SQLFuncName_Month,
+		SQLFuncName_Day:             SQLFuncName_Day,
+		SQLFuncName_Hour:            SQLFuncName_Hour,
+		SQLFuncName_Minute:          SQLFuncName_Minute,
+		SQLFuncName_Second:          SQLFuncName_Second,
+		SQLFuncName_Date_Format:     SQLFuncName_Date_Format,
+		SQLFuncName_Round:           SQLFuncName_Round,
+		SQLFuncName_If:              SQLFuncName_If,
+		SQLFuncName_Now:             SQLFuncName_Now,
+		SQLFuncName_To_Double:       SQLFuncName_To_Double,
+		SQLFuncName_To_Floor:        SQLFuncName_To_Floor,
+		SQLFuncName_Substring_Index: SQLFuncName_Substring_Index,
 	}
 )
+
+type ExprField interface {
+	GetType() SQLFieldType
+	GetTable() string
+	GetFunc() string
+	GetDistinct() bool
+	GetArgs() []ExprField
+	GetColName() *Column
+	GetColType() ColumnType
+	GetName() string
+	GetRawName() string
+	GetAsName() string
+	GetValueKind() byte
+	GetValue() any
+	SetType(SQLFieldType)
+	SetTable(string)
+	SetFunc(string)
+	SetDistinct(bool)
+	SetArgs([]ExprField)
+	SetName(*Column)
+	SetAsName(string)
+	SetValueKind(byte)
+	SetValue(any)
+	HasDistinct() bool
+	IsAllValue() bool
+}
 
 type SQLField struct {
 	Type      SQLFieldType
 	Table     *string
 	Func      *string
 	Distinct  bool
-	Args      []*SQLField
+	Args      []ExprField
 	Name      *Column
 	AsName    *string
 	ValueKind *byte
 	Value     any
+}
+
+func (f *SQLField) GetColName() *Column {
+	return f.Name
+}
+
+func (f *SQLField) GetRawName() string {
+	if f.Name != nil {
+		return f.Name.Name
+	}
+	return ""
+}
+
+func (f *SQLField) GetColType() ColumnType {
+	if f.Name != nil {
+		return f.Name.Type
+	}
+	return 0
+}
+
+func (f *SQLField) GetType() SQLFieldType {
+	return f.Type
+}
+
+func (f *SQLField) GetTable() string {
+	if f.Func != nil {
+		return f.Args[0].GetTable()
+	}
+	if f.Table != nil {
+		return *f.Table
+	}
+	return ""
+}
+
+func (f *SQLField) GetFunc() string {
+	if f.Func != nil {
+		return *f.Func
+	}
+	return ""
+}
+
+func (f *SQLField) GetDistinct() bool {
+	return f.Distinct
+}
+
+func (f *SQLField) GetArgs() []ExprField {
+	return f.Args
+}
+
+func (f *SQLField) GetValueKind() byte {
+	if f.ValueKind != nil {
+		return *f.ValueKind
+	}
+	return 0
+}
+
+func (f *SQLField) GetValue() any {
+	return f.Value
+}
+
+func (f *SQLField) SetType(fieldType SQLFieldType) {
+	f.Type = fieldType
+}
+
+func (f *SQLField) SetTable(table string) {
+	f.Table = &table
+}
+
+func (f *SQLField) SetFunc(fn string) {
+	f.Func = &fn
+}
+
+func (f *SQLField) SetDistinct(distinct bool) {
+	f.Distinct = distinct
+}
+
+func (f *SQLField) SetArgs(args []ExprField) {
+	f.Args = args
+}
+
+func (f *SQLField) SetName(name *Column) {
+	f.Name = name
+}
+
+func (f *SQLField) SetAsName(asName string) {
+	f.AsName = &asName
+}
+
+func (f *SQLField) SetValueKind(kind byte) {
+	f.ValueKind = &kind
+}
+
+func (f *SQLField) SetValue(val any) {
+	f.Value = val
 }
 
 func (f *SQLField) Copy(source *SQLField) {
@@ -141,10 +258,6 @@ func (f SQLField) GetName() string {
 	case SQLField_Type_Normal:
 		name = f.Name.Name
 	case SQLField_Type_Agg_Func, SQLField_Type_Func:
-		if slices.Contains(maps.Values(SQLOperator_Map), *f.Func) {
-			name = fmt.Sprintf("%v%v%v)", f.Args[0].GetName(), SQLOperator_Origin_Map[*f.Func], f.Args[1].GetName())
-			break
-		}
 		var args []string
 		for _, field := range f.Args {
 			args = append(args, field.GetName())
@@ -171,7 +284,7 @@ func (f SQLField) GetAsName() string {
 	return asName
 }
 
-func (f SQLField) HasDistinct() bool {
+func (f *SQLField) HasDistinct() bool {
 	if f.Distinct {
 		return f.Distinct
 	}
@@ -184,7 +297,7 @@ func (f SQLField) HasDistinct() bool {
 	return false
 }
 
-func (f SQLField) IsAllValue() bool {
+func (f *SQLField) IsAllValue() bool {
 	if f.Type == SQLField_Type_Normal || f.Type == SQLField_Type_WildCard {
 		return false
 	}
@@ -206,7 +319,7 @@ type SQLTable struct {
 	Ref         *SQLSelect
 	Left        *SQLTable
 	Right       *SQLTable
-	On          *BinaryOperation
+	On          ExprField
 }
 
 func (t SQLTable) GetAsName() string {
@@ -232,8 +345,36 @@ type SQLLimit struct {
 type BinaryOperation struct {
 	SQLField
 	Operator *opcode.Op
-	Left     *BinaryOperation
-	Right    *BinaryOperation
+	Left     ExprField
+	Right    ExprField
+	Not      bool
+}
+
+type CaseWhenExpr struct {
+	SQLField
+	WhenClauses []*WhenClause
+	Else        ExprField
+}
+
+type WhenClause struct {
+	Expr   ExprField
+	Result ExprField
+}
+
+func (b *BinaryOperation) IsAllValue() bool {
+	if isAllValue := b.Left.IsAllValue(); !isAllValue {
+		return isAllValue
+	}
+	if isAllValue := b.Right.IsAllValue(); !isAllValue {
+		return isAllValue
+	}
+
+	return true
+}
+
+func (b *BinaryOperation) GetArgs() []ExprField {
+	args := []ExprField{b.Left, b.Right}
+	return args
 }
 
 type ColumnType int
@@ -359,26 +500,31 @@ func populateTableSchema(table *SQLTable, tableSchema map[string][]*Column) (err
 		}
 		table.TableSchema = schema
 	} else {
-		var fields []*SQLField
-		var hasWildCard bool
+		var fields []ExprField
+		var wildCardField ExprField
 		for _, field := range table.Ref.Fields {
-			if field.Type == SQLField_Type_WildCard {
-				hasWildCard = true
+			if field.GetType() == SQLField_Type_WildCard {
+				wildCardField = field
 				continue
 			}
 			fields = append(fields, field)
 		}
 
-		if hasWildCard {
+		if wildCardField != nil {
 			// 通配符查询时schema为所有字段，需要校验字段是否重复
 			var allCols []*Column
 			colMap := map[string]string{}
-			for table, cols := range table.Ref.From.TableSchema {
+			for tableName, cols := range table.Ref.From.TableSchema {
+				if wildCardField.GetTable() != "" && wildCardField.GetTable() != tableName {
+					// 指定表名的通配符查询只检查该表字段
+					allCols = append(allCols, cols...)
+					continue
+				}
 				for _, col := range cols {
 					if ot, ok := colMap[col.Name]; ok {
-						err = fmt.Errorf("select duplicate column [%v] in tables [%v,%v]", col.Name, ot, table)
+						err = fmt.Errorf("select duplicate column [%v] in tables [%v,%v]", col.Name, ot, tableName)
 					} else {
-						colMap[col.Name] = table
+						colMap[col.Name] = tableName
 						allCols = append(allCols, col)
 					}
 				}
@@ -392,7 +538,7 @@ func populateTableSchema(table *SQLTable, tableSchema map[string][]*Column) (err
 
 		for _, field := range fields {
 			// 通配符查询时，普通字段无需重复添加
-			if hasWildCard && field.Type == SQLField_Type_Normal {
+			if wildCardField != nil && wildCardField.GetTable() == field.GetTable() && field.GetType() == SQLField_Type_Normal {
 				continue
 			}
 			var col *Column
@@ -411,33 +557,33 @@ func populateTableSchema(table *SQLTable, tableSchema map[string][]*Column) (err
 }
 
 func parseSelectStmt(stmtNode *ast.SelectStmt, tableAlias map[string]bool) (sqlSelecct *SQLSelect, err error) {
-	var fields []*SQLField
+	var fields []ExprField
 	for _, selectField := range stmtNode.Fields.Fields {
-		var field *SQLField
+		var field ExprField
 		field, err = parserSelectField(selectField)
 		if err != nil {
 			return
 		}
 		if field != nil {
-			if stmtNode.Distinct && field.Type != SQLField_Type_Value {
-				field.Distinct = stmtNode.Distinct
+			if stmtNode.Distinct && field.GetType() != SQLField_Type_Value {
+				field.SetDistinct(stmtNode.Distinct)
 			}
 			fields = append(fields, field)
 		}
 	}
 
-	var where *BinaryOperation
+	var where ExprField
 	if stmtNode.Where != nil {
-		where, err = parserBinaryOperationExpr(stmtNode.Where)
+		where, err = parserFieldExpr(stmtNode.Where)
 		if err != nil {
 			return
 		}
 	}
 
-	var groupBy []*SQLField
+	var groupBy []ExprField
 	if stmtNode.GroupBy != nil {
 		for _, item := range stmtNode.GroupBy.Items {
-			var field *SQLField
+			var field ExprField
 			field, err = parserFieldExpr(item.Expr)
 			if err != nil {
 				return
@@ -446,9 +592,9 @@ func parseSelectStmt(stmtNode *ast.SelectStmt, tableAlias map[string]bool) (sqlS
 		}
 	}
 
-	var having *BinaryOperation
+	var having ExprField
 	if stmtNode.Having != nil {
-		having, err = parserBinaryOperationExpr(stmtNode.Having.Expr)
+		having, err = parserFieldExpr(stmtNode.Having.Expr)
 		if err != nil {
 			return
 		}
@@ -457,13 +603,13 @@ func parseSelectStmt(stmtNode *ast.SelectStmt, tableAlias map[string]bool) (sqlS
 	var orderBy []*SQLOrderBy
 	if stmtNode.OrderBy != nil {
 		for _, item := range stmtNode.OrderBy.Items {
-			var field *SQLField
+			var field ExprField
 			field, err = parserFieldExpr(item.Expr)
 			if err != nil {
 				return
 			}
 			orderBy = append(orderBy, &SQLOrderBy{
-				SQLField: *field,
+				SQLField: *field.(*SQLField),
 				Desc:     item.Desc,
 			})
 		}
@@ -471,22 +617,22 @@ func parseSelectStmt(stmtNode *ast.SelectStmt, tableAlias map[string]bool) (sqlS
 
 	var limit *SQLLimit
 	if stmtNode.Limit != nil {
-		var lf *SQLField
+		var lf ExprField
 		lf, err = parserFieldExpr(stmtNode.Limit.Count)
 		if err != nil {
 			return
 		}
-		limitCnt := lf.Value.(int64)
+		limitCnt := lf.GetValue().(int64)
 		limit = &SQLLimit{
 			Limit: &limitCnt,
 		}
 		if stmtNode.Limit.Offset != nil {
-			var offset *SQLField
+			var offset ExprField
 			offset, err = parserFieldExpr(stmtNode.Limit.Offset)
 			if err != nil {
 				return
 			}
-			offsetCnt := offset.Value.(int64)
+			offsetCnt := offset.GetValue().(int64)
 			limit.Offset = &offsetCnt
 		}
 	}
@@ -516,9 +662,9 @@ func parseTableClause(rsNode ast.ResultSetNode, tableAlias map[string]bool) (tab
 		return
 	}
 	if join, ok := rsNode.(*ast.Join); ok {
-		var on *BinaryOperation
+		var on ExprField
 		if join.On != nil {
-			on, err = parserBinaryOperationExpr(join.On.Expr)
+			on, err = parserFieldExpr(join.On.Expr)
 			if err != nil {
 				return
 			}
@@ -568,7 +714,7 @@ func parseTableClause(rsNode ast.ResultSetNode, tableAlias map[string]bool) (tab
 				return
 			}
 			var selectStmt *SQLSelect
-			selectStmt, err = parseSelectStmt(tableRef, tableAlias)
+			selectStmt, err = parseSelectStmt(tableRef, map[string]bool{})
 			if err != nil {
 				return
 			}
@@ -582,14 +728,14 @@ func parseTableClause(rsNode ast.ResultSetNode, tableAlias map[string]bool) (tab
 	return
 }
 
-func parserBinaryOperationExpr(exprNode ast.ExprNode) (bo *BinaryOperation, err error) {
+func parserBinaryOperationExpr(exprNode ast.ExprNode) (bo ExprField, err error) {
 	if subBo, ok := exprNode.(*ast.BinaryOperationExpr); ok {
-		var left *BinaryOperation
+		var left ExprField
 		left, err = parserBinaryOperationExpr(subBo.L)
 		if err != nil {
 			return
 		}
-		var right *BinaryOperation
+		var right ExprField
 		right, err = parserBinaryOperationExpr(subBo.R)
 		if err != nil {
 			return
@@ -608,25 +754,17 @@ func parserBinaryOperationExpr(exprNode ast.ExprNode) (bo *BinaryOperation, err 
 		return
 	}
 
-	var field *SQLField
-	field, err = parserFieldExpr(exprNode)
-	if err != nil {
-		return
-	}
-
-	bo = &BinaryOperation{
-		SQLField: *field,
-	}
+	bo, err = parserFieldExpr(exprNode)
 
 	return
 }
 
-func parserSelectField(selectField *ast.SelectField) (field *SQLField, err error) {
+func parserSelectField(selectField *ast.SelectField) (field ExprField, err error) {
 	// 通配符查询
 	if selectField.WildCard != nil {
 		field = &SQLField{Type: SQLField_Type_WildCard, Name: &Column{Type: WildCard, Name: SQLField_Type_WildCard_Value}}
 		if selectField.WildCard.Table.O != "" {
-			field.Table = &selectField.WildCard.Table.O
+			field.SetTable(selectField.WildCard.Table.O)
 		}
 		return
 	}
@@ -641,61 +779,61 @@ func parserSelectField(selectField *ast.SelectField) (field *SQLField, err error
 
 	// 字段别名
 	if selectField.AsName.O != "" {
-		field.AsName = &selectField.AsName.O
+		field.SetAsName(selectField.AsName.O)
 	}
 
 	return
 }
 
-func parserFieldExpr(node ast.ExprNode) (field *SQLField, err error) {
+func parserFieldExpr(node ast.ExprNode) (field ExprField, err error) {
 	field = &SQLField{}
 	switch exprNode := node.(type) {
 	// 普通字段
 	case *ast.ColumnNameExpr:
-		field.Type = SQLField_Type_Normal
+		field.SetType(SQLField_Type_Normal)
 		if exprNode.Name.Table.O != "" {
-			field.Table = &exprNode.Name.Table.O
+			field.SetTable(exprNode.Name.Table.O)
 		}
 		if exprNode.Name.Name.O != "" {
-			field.Name = &Column{Name: exprNode.Name.Name.O}
+			field.SetName(&Column{Name: exprNode.Name.Name.O})
 		}
 	// 聚合函数的字段
 	case *ast.AggregateFuncExpr:
-		field.Type = SQLField_Type_Agg_Func
+		field.SetType(SQLField_Type_Agg_Func)
 		if f, ok := SQLFunc_Agg_Map[strings.ToUpper(exprNode.F)]; ok {
-			field.Func = &f
+			field.SetFunc(f)
 		} else {
 			err = fmt.Errorf("invalid function name=%v", exprNode.F)
 			return
 		}
-		field.Distinct = exprNode.Distinct
-		var argFields []*SQLField
+		field.SetDistinct(exprNode.Distinct)
+		var argFields []ExprField
 		for _, arg := range exprNode.Args {
-			var argField *SQLField
+			var argField ExprField
 			argField, err = parserFieldExpr(arg)
 			if err != nil {
 				return
 			}
 			if argField != nil {
-				if field.Distinct && argField.Type != SQLField_Type_Value {
-					argField.Distinct = field.Distinct
+				if field.GetDistinct() && argField.GetType() != SQLField_Type_Value {
+					argField.SetDistinct(field.GetDistinct())
 				}
 				argFields = append(argFields, argField)
 			}
 		}
-		field.Args = argFields
+		field.SetArgs(argFields)
 	// 取值函数的字段
 	case *ast.FuncCallExpr:
-		field.Type = SQLField_Type_Func
+		field.SetType(SQLField_Type_Func)
 		if f, ok := SQLFunc_Map[strings.ToUpper(exprNode.FnName.O)]; ok {
-			field.Func = &f
+			field.SetFunc(f)
 		} else {
 			err = fmt.Errorf("invalid function name=%v", exprNode.FnName.O)
 			return
 		}
-		var argFields []*SQLField
+		var argFields []ExprField
 		for _, arg := range exprNode.Args {
-			var argField *SQLField
+			var argField ExprField
 			argField, err = parserFieldExpr(arg)
 			if err != nil {
 				return
@@ -704,15 +842,18 @@ func parserFieldExpr(node ast.ExprNode) (field *SQLField, err error) {
 				argFields = append(argFields, argField)
 			}
 		}
-		field.Args = argFields
+		field.SetArgs(argFields)
 	// 显式值
 	case *parserDriver.ValueExpr:
-		field.Type = SQLField_Type_Value
+		field.SetType(SQLField_Type_Value)
 		var value any
 		var kind byte
 		var name *Column
 		switch exprNode.Datum.Kind() {
 		case types.KindNull:
+			kind = types.KindNull
+			value = nil
+			name = &Column{Type: String, Name: fmt.Sprint(nil)}
 		case types.KindInt64:
 			kind = types.KindInt64
 			value = exprNode.Datum.GetInt64()
@@ -736,35 +877,60 @@ func parserFieldExpr(node ast.ExprNode) (field *SQLField, err error) {
 		default:
 			log.Debugf("value kind=%v", exprNode.Datum.Kind())
 		}
-		field.ValueKind = &kind
-		field.Value = value
-		field.Name = name
+		field.SetValueKind(kind)
+		field.SetValue(value)
+		field.SetName(name)
 	// 带计算符的字段
 	case *ast.BinaryOperationExpr:
-		field.Type = SQLField_Type_Func
-		if f, ok := SQLOperator_Map[exprNode.Op]; ok {
-			field.Func = &f
-		} else {
-			err = fmt.Errorf("invalid operator=%v", exprNode.Op)
-			return
-		}
-		var leftField *SQLField
-		leftField, err = parserFieldExpr(exprNode.L)
-		if err != nil {
-			return
-		}
-		var rightField *SQLField
-		rightField, err = parserFieldExpr(exprNode.R)
-		if err != nil {
-			return
-		}
-
-		field.Args = append(field.Args, leftField)
-		field.Args = append(field.Args, rightField)
+		field, err = parserBinaryOperationExpr(exprNode)
 	case *ast.ParenthesesExpr:
 		field, err = parserFieldExpr(exprNode.Expr)
+	case *ast.PatternInExpr:
+		operator := opcode.In
+		bo := BinaryOperation{Operator: &operator, Not: exprNode.Not}
+		bo.Left, err = parserFieldExpr(exprNode.Expr)
+		if err != nil {
+			return
+		}
+		var argFields []ExprField
+		for _, arg := range exprNode.List {
+			var argField ExprField
+			argField, err = parserFieldExpr(arg)
+			if err != nil {
+				return
+			}
+			argFields = append(argFields, argField)
+		}
+		bo.Right = &SQLField{Args: argFields}
+		field = &bo
+	case *ast.CaseExpr:
+		caseWhen := CaseWhenExpr{SQLField: SQLField{Type: SQLField_Type_Func}}
+		caseWhen.SetFunc(SQLFuncName_Case)
+		if exprNode.ElseClause != nil {
+			caseWhen.Else, err = parserFieldExpr(exprNode.ElseClause)
+			if err != nil {
+				return
+			}
+		}
+		var whenClauses []*WhenClause
+		for _, whenClause := range exprNode.WhenClauses {
+			var expr ExprField
+			expr, err = parserFieldExpr(whenClause.Expr)
+			if err != nil {
+				return
+			}
+			var result ExprField
+			result, err = parserFieldExpr(whenClause.Result)
+			if err != nil {
+				return
+			}
+			whenClauses = append(whenClauses, &WhenClause{Expr: expr, Result: result})
+		}
+		caseWhen.WhenClauses = whenClauses
+		field = &caseWhen
 	default:
-		log.Debugf("unknow exprNode type=%T", node)
+		err = fmt.Errorf("unknow exprNode type=%T", node)
+		return
 	}
 
 	return
@@ -806,7 +972,7 @@ func validateFunc(sqlSelect *SQLSelect) (err error) {
 	allAggFunc := true
 	for _, field := range sqlSelect.Fields {
 		if len(sqlSelect.GroupBy) == 0 {
-			if field.Type == SQLField_Type_Agg_Func {
+			if field.GetType() == SQLField_Type_Agg_Func {
 				aggFuncWithoutGroupBy = true
 			} else {
 				allAggFunc = false
@@ -821,33 +987,33 @@ func validateFunc(sqlSelect *SQLSelect) (err error) {
 	}
 
 	// 校验过滤函数是否合法
-	var whereFields []*SQLField
+	var whereFields []ExprField
 	if sqlSelect.Where != nil {
 		whereFields = collectBinaryOperationFields(sqlSelect.Where)
 	}
 	for _, field := range whereFields {
-		if field.Type == SQLField_Type_Agg_Func {
-			err = fmt.Errorf("[%v] use aggregate function in WHERE clause", field.Name.Name)
+		if field.GetType() == SQLField_Type_Agg_Func {
+			err = fmt.Errorf("[%v] use aggregate function in WHERE clause", field.GetRawName())
 			return
 		}
 	}
 
 	// 校验分组函数是否合法
 	for _, field := range sqlSelect.GroupBy {
-		if field.Type == SQLField_Type_Agg_Func {
-			err = fmt.Errorf("[%v] use aggregate function in GROUP BY clause", field.Name.Name)
+		if field.GetType() == SQLField_Type_Agg_Func {
+			err = fmt.Errorf("[%v] use aggregate function in GROUP BY clause", field.GetRawName())
 			return
 		}
 	}
 
 	// 校验分组过滤函数是否合法
-	var havingFields []*SQLField
+	var havingFields []ExprField
 	if sqlSelect.Having != nil {
 		havingFields = collectBinaryOperationFields(sqlSelect.Having)
 	}
 	for _, field := range havingFields {
-		if field.Type == SQLField_Type_Agg_Func {
-			err = fmt.Errorf("[%v] use aggregate function in HAVING clause", field.Name.Name)
+		if field.GetType() == SQLField_Type_Agg_Func {
+			err = fmt.Errorf("[%v] use aggregate function in HAVING clause", field.GetRawName())
 			return
 		}
 	}
@@ -900,11 +1066,11 @@ func validateField(sqlSelect *SQLSelect) (err error) {
 		if err != nil {
 			return
 		}
-		field.Name = col
+		field.SetName(col)
 	}
 
 	// 校验过滤字段
-	var whereFields []*SQLField
+	var whereFields []ExprField
 	if sqlSelect.Where != nil {
 		whereFields = collectBinaryOperationFields(sqlSelect.Where)
 	}
@@ -914,7 +1080,7 @@ func validateField(sqlSelect *SQLSelect) (err error) {
 		if err != nil {
 			return
 		}
-		field.Name = col
+		field.SetName(col)
 	}
 
 	if len(sqlSelect.GroupBy) > 0 {
@@ -928,7 +1094,7 @@ func validateField(sqlSelect *SQLSelect) (err error) {
 				// group by字段可能是select字段
 				for _, selectField := range sqlSelect.Fields {
 					if field.GetName() == selectField.GetAsName() {
-						field.Copy(selectField)
+						field.(*SQLField).Copy(selectField.(*SQLField))
 						found = true
 						err = nil
 						break
@@ -939,7 +1105,7 @@ func validateField(sqlSelect *SQLSelect) (err error) {
 				}
 				return
 			}
-			field.Name = col
+			field.SetName(col)
 			groupByFields = append(groupByFields, field.GetName())
 		}
 		err = validateFieldWhenHaveGroupBy(groupByFields, sqlSelect.Fields)
@@ -949,7 +1115,7 @@ func validateField(sqlSelect *SQLSelect) (err error) {
 	}
 
 	// 校验分组过滤字段
-	var havingFields []*SQLField
+	var havingFields []ExprField
 	if sqlSelect.Having != nil {
 		havingFields = collectBinaryOperationFields(sqlSelect.Having)
 	}
@@ -971,7 +1137,7 @@ func validateField(sqlSelect *SQLSelect) (err error) {
 			}
 			return
 		}
-		field.Name = col
+		field.SetName(col)
 	}
 
 	// 校验排序字段
@@ -1009,19 +1175,19 @@ func validateField(sqlSelect *SQLSelect) (err error) {
 			if err != nil {
 				return
 			}
-			field.Name = col
+			field.SetName(col)
 		}
 	}
 
 	return
 }
 
-func validateFieldWhenHaveGroupBy(groupByFields []string, fields []*SQLField) (err error) {
+func validateFieldWhenHaveGroupBy(groupByFields []string, fields []ExprField) (err error) {
 	if len(groupByFields) == 0 || len(fields) == 0 {
 		return
 	}
 	for _, field := range fields {
-		switch field.Type {
+		switch field.GetType() {
 		case SQLField_Type_Value, SQLField_Type_Agg_Func:
 			// 显式值、聚合函数不限制
 			continue
@@ -1037,7 +1203,7 @@ func validateFieldWhenHaveGroupBy(groupByFields []string, fields []*SQLField) (e
 			}
 		case SQLField_Type_Func:
 			// 使用json_extract时需保证select与group by一致
-			if *field.Func == SQLFuncName_Json_Extract {
+			if field.GetFunc() == SQLFuncName_Json_Extract {
 				if !slices.Contains(groupByFields, field.GetName()) {
 					err = fmt.Errorf("field %v not in groupBy %v", field.GetName(), groupByFields)
 					return
@@ -1048,7 +1214,7 @@ func validateFieldWhenHaveGroupBy(groupByFields []string, fields []*SQLField) (e
 					continue
 				}
 				// 不一致则递归校验参数
-				err = validateFieldWhenHaveGroupBy(groupByFields, field.Args)
+				err = validateFieldWhenHaveGroupBy(groupByFields, field.GetArgs())
 				if err != nil {
 					return
 				}
@@ -1059,21 +1225,23 @@ func validateFieldWhenHaveGroupBy(groupByFields []string, fields []*SQLField) (e
 	return
 }
 
-func findColFromSchema(field *SQLField, tableSchema map[string][]*Column) (matchCol *Column, err error) {
-	if field.Type == SQLField_Type_Value {
-		matchCol = field.Name
+func findColFromSchema(field ExprField, tableSchema map[string][]*Column) (matchCol *Column, err error) {
+	if field.GetType() == SQLField_Type_Value {
+		matchCol = field.GetColName()
 		return
 	}
-	if field.Type == SQLField_Type_WildCard {
+	if field.GetType() == SQLField_Type_WildCard {
 		matchCol = &Column{
 			Type: WildCard,
 			Name: SQLField_Type_WildCard_Value,
 		}
 		return
 	}
-	if field.Type == SQLField_Type_Func || field.Type == SQLField_Type_Agg_Func {
+
+	// 函数字段
+	if field.GetType() == SQLField_Type_Func || field.GetType() == SQLField_Type_Agg_Func {
 		var cols []*Column
-		for _, arg := range field.Args {
+		for _, arg := range field.GetArgs() {
 			var col *Column
 			col, err = findColFromSchema(arg, tableSchema)
 			if err != nil {
@@ -1081,37 +1249,48 @@ func findColFromSchema(field *SQLField, tableSchema map[string][]*Column) (match
 			}
 			cols = append(cols, col)
 		}
-		switch *field.Func {
-		case SQLFuncName_Sum, SQLFuncName_Avg, SQLFuncName_Max, SQLFuncName_Min:
+		switch field.GetFunc() {
+		case SQLFuncName_Sum, SQLFuncName_Max, SQLFuncName_Min:
 			if len(cols) != 1 {
-				err = fmt.Errorf(Func_Arg_Err_Msg, *field.Func, 1, len(cols))
+				err = fmt.Errorf(Func_Arg_Err_Msg, field.GetFunc(), 1, len(cols))
 				return
 			}
 			col := cols[0]
-			if !slices.Contains([]ColumnType{Int, Float, Boolean, String, Datetime}, col.Type) {
-				err = fmt.Errorf(Func_Arg_Type_Err_Msg, *field.Func, col.Type, col.Name)
+			if slices.Contains([]ColumnType{WildCard}, col.Type) {
+				err = fmt.Errorf(Func_Arg_Type_Err_Msg, field.GetFunc(), col.Type, col.Name)
 				return
 			}
 			matchCol = &Column{Type: col.Type, Name: field.GetAsName()}
+		case SQLFuncName_Avg:
+			if len(cols) != 1 {
+				err = fmt.Errorf(Func_Arg_Err_Msg, field.GetFunc(), 1, len(cols))
+				return
+			}
+			col := cols[0]
+			if !slices.Contains([]ColumnType{Int, Float}, col.Type) {
+				err = fmt.Errorf(Func_Arg_Type_Err_Msg, field.GetFunc(), col.Type, col.Name)
+				return
+			}
+			matchCol = &Column{Type: Float, Name: field.GetAsName()}
 		case SQLFuncName_Count:
 			if len(cols) != 1 {
-				err = fmt.Errorf(Func_Arg_Err_Msg, *field.Func, 1, len(cols))
+				err = fmt.Errorf(Func_Arg_Err_Msg, field.GetFunc(), 1, len(cols))
 				return
 			}
 			matchCol = &Column{Type: Int, Name: field.GetAsName()}
 		case SQLFuncName_Json_Extract:
 			if len(cols) != 2 {
-				err = fmt.Errorf(Func_Arg_Err_Msg, *field.Func, 2, len(cols))
+				err = fmt.Errorf(Func_Arg_Err_Msg, field.GetFunc(), 2, len(cols))
 				return
 			}
 			col := cols[0]
 			expr := cols[1]
 			if col.Type != Json {
-				err = fmt.Errorf(Func_Arg_Type_Err_Msg, *field.Func, col.Type, col.Name)
+				err = fmt.Errorf(Func_Arg_Type_Err_Msg, field.GetFunc(), col.Type, col.Name)
 				return
 			}
 			if expr.Type != String {
-				err = fmt.Errorf(Func_Arg_Type_Err_Msg, *field.Func, col.Type, col.Name)
+				err = fmt.Errorf(Func_Arg_Type_Err_Msg, field.GetFunc(), col.Type, col.Name)
 				return
 			}
 
@@ -1122,23 +1301,23 @@ func findColFromSchema(field *SQLField, tableSchema map[string][]*Column) (match
 			matchCol = &Column{Type: matchCol.Type, Name: field.GetAsName()}
 		case SQLFuncName_Year, SQLFuncName_Month, SQLFuncName_Day, SQLFuncName_Hour, SQLFuncName_Minute, SQLFuncName_Second:
 			if len(cols) != 1 {
-				err = fmt.Errorf(Func_Arg_Err_Msg, *field.Func, 1, len(cols))
+				err = fmt.Errorf(Func_Arg_Err_Msg, field.GetFunc(), 1, len(cols))
 				return
 			}
 			col := cols[0]
 			if !slices.Contains([]ColumnType{Datetime}, col.Type) {
-				err = fmt.Errorf(Func_Arg_Type_Err_Msg, *field.Func, col.Type, col.Name)
+				err = fmt.Errorf(Func_Arg_Type_Err_Msg, field.GetFunc(), col.Type, col.Name)
 				return
 			}
-			matchCol = &Column{Type: String, Name: field.GetAsName()}
+			matchCol = &Column{Type: Int, Name: field.GetAsName()}
 		case SQLFuncName_Date_Format:
 			if len(cols) != 2 {
-				err = fmt.Errorf(Func_Arg_Err_Msg, *field.Func, 2, len(cols))
+				err = fmt.Errorf(Func_Arg_Err_Msg, field.GetFunc(), 2, len(cols))
 				return
 			}
 			datetimeCol := cols[0]
 			if !slices.Contains([]ColumnType{Datetime}, datetimeCol.Type) {
-				err = fmt.Errorf(Func_Arg_Type_Err_Msg, *field.Func, datetimeCol.Type, datetimeCol.Name)
+				err = fmt.Errorf(Func_Arg_Type_Err_Msg, field.GetFunc(), datetimeCol.Type, datetimeCol.Name)
 				return
 			}
 			patternFiled := cols[1]
@@ -1147,36 +1326,14 @@ func findColFromSchema(field *SQLField, tableSchema map[string][]*Column) (match
 				return
 			}
 			matchCol = &Column{Type: String, Name: field.GetAsName()}
-		case SQLFuncName_Plus, SQLFuncName_Minus, SQLFuncName_Mul, SQLFuncName_Div:
-			if len(cols) != 2 {
-				err = fmt.Errorf(Func_Arg_Err_Msg, *field.Func, 2, len(cols))
-				return
-			}
-
-			col1 := cols[0]
-			col2 := cols[1]
-			if !slices.Contains([]ColumnType{Int, Float}, col1.Type) || !slices.Contains([]ColumnType{Int, Float}, col2.Type) {
-				err = fmt.Errorf("only number column can perform [+-*/]")
-				return
-			}
-
-			colType := col1.Type
-			if col2.Type == Float {
-				colType = Float
-			}
-			if *field.Func == SQLFuncName_Div {
-				colType = Float
-			}
-
-			matchCol = &Column{Type: colType, Name: field.GetAsName()}
 		case SQLFuncName_Round:
 			if len(cols) != 2 {
-				err = fmt.Errorf(Func_Arg_Err_Msg, *field.Func, 2, len(cols))
+				err = fmt.Errorf(Func_Arg_Err_Msg, field.GetFunc(), 2, len(cols))
 				return
 			}
 			numberCol := cols[0]
 			if !slices.Contains([]ColumnType{Int, Float}, numberCol.Type) {
-				err = fmt.Errorf(Func_Arg_Type_Err_Msg, *field.Func, numberCol.Type, numberCol.Name)
+				err = fmt.Errorf(Func_Arg_Type_Err_Msg, field.GetFunc(), numberCol.Type, numberCol.Name)
 				return
 			}
 			preciseCol := cols[1]
@@ -1185,17 +1342,159 @@ func findColFromSchema(field *SQLField, tableSchema map[string][]*Column) (match
 				return
 			}
 			matchCol = &Column{Type: Float, Name: field.GetAsName()}
+		case SQLFuncName_If:
+			// IF函数必须有三个参数
+			if len(cols) != 3 {
+				err = fmt.Errorf(Func_Arg_Err_Msg, field.GetFunc(), 3, len(cols))
+				return
+			}
+			// 第一个参数必须是布尔值或int值
+			exprCol := cols[0]
+			if exprCol.Type != Boolean && exprCol.Type != Int {
+				err = fmt.Errorf(Func_Arg_Type_Err_Msg, field.GetFunc(), exprCol.Type, exprCol.Name)
+				return
+			}
+			matchCol = &Column{Type: cols[1].Type, Name: field.GetAsName()}
+		case SQLFuncName_Case:
+			caseWhen := field.(*CaseWhenExpr)
+			var colType ColumnType
+			for _, whenClause := range caseWhen.WhenClauses {
+				var whenExprCol *Column
+				whenExprCol, err = findColFromSchema(whenClause.Expr, tableSchema)
+				if err != nil {
+					return
+				}
+				whenClause.Expr.SetName(whenExprCol)
+				var whenResultCol *Column
+				whenResultCol, err = findColFromSchema(whenClause.Result, tableSchema)
+				if err != nil {
+					return
+				}
+				whenClause.Result.SetName(whenResultCol)
+				if whenClause.Result.GetType() == SQLField_Type_Value {
+					if whenClause.Result.GetValue() != nil {
+						// 非空值才能判断类型
+						colType = whenResultCol.Type
+					}
+				} else {
+					colType = whenResultCol.Type
+				}
+			}
+			matchCol = &Column{Type: colType, Name: field.GetAsName()}
+		case SQLFuncName_Now:
+			matchCol = &Column{Type: Datetime, Name: field.GetAsName()}
+		case SQLFuncName_To_Double:
+			if len(cols) != 1 {
+				err = fmt.Errorf(Func_Arg_Err_Msg, field.GetFunc(), 1, len(cols))
+				return
+			}
+			col := cols[0]
+			if !slices.Contains([]ColumnType{String}, col.Type) {
+				err = fmt.Errorf(Func_Arg_Type_Err_Msg, field.GetFunc(), col.Type, col.Name)
+				return
+			}
+			matchCol = &Column{Type: Float, Name: field.GetAsName()}
+		case SQLFuncName_To_Floor:
+			if len(cols) != 1 {
+				err = fmt.Errorf(Func_Arg_Err_Msg, field.GetFunc(), 1, len(cols))
+				return
+			}
+			col := cols[0]
+			if !slices.Contains([]ColumnType{Int, Float}, col.Type) {
+				err = fmt.Errorf(Func_Arg_Type_Err_Msg, field.GetFunc(), col.Type, col.Name)
+				return
+			}
+			matchCol = &Column{Type: Int, Name: field.GetAsName()}
+		case SQLFuncName_Json_Arr_Agg:
+			if len(cols) != 1 {
+				err = fmt.Errorf(Func_Arg_Err_Msg, field.GetFunc(), 1, len(cols))
+				return
+			}
+			col := cols[0]
+			if slices.Contains([]ColumnType{WildCard}, col.Type) {
+				err = fmt.Errorf(Func_Arg_Type_Err_Msg, field.GetFunc(), col.Type, col.Name)
+				return
+			}
+			matchCol = &Column{Type: Array, Name: field.GetAsName(), Array: &Column{Type: col.Type}}
+		case SQLFuncName_Substring_Index:
+			if len(cols) != 3 {
+				err = fmt.Errorf(Func_Arg_Err_Msg, field.GetFunc(), 3, len(cols))
+				return
+			}
+			if cols[0].Type != String || cols[1].Type != String || cols[2].Type != Int {
+				err = fmt.Errorf(Func_Arg_Type_Err_Msg, field.GetFunc(), cols, cols)
+				return
+			}
+			matchCol = &Column{Type: String, Name: field.GetAsName()}
+		default:
+			err = fmt.Errorf("unsupport func [%v]", field.GetFunc())
+			return
 		}
 		return
 	}
+
+	// 二元表达式
+	if bo, ok := field.(*BinaryOperation); ok {
+		var left *Column
+		left, err = findColFromSchema(bo.Left, tableSchema)
+		if err != nil {
+			return
+		}
+		bo.Left.SetName(left)
+		var right *Column
+		if *bo.Operator == opcode.In {
+			var argCols []*Column
+			for _, arg := range bo.Right.GetArgs() {
+				var argCol *Column
+				argCol, err = findColFromSchema(arg, tableSchema)
+				if err != nil {
+					return
+				}
+				argCols = append(argCols, argCol)
+			}
+			right = &Column{Type: argCols[0].Type}
+		} else {
+			right, err = findColFromSchema(bo.Right, tableSchema)
+			if err != nil {
+				return
+			}
+		}
+		bo.Right.SetName(right)
+
+		switch *bo.Operator {
+		case opcode.Plus, opcode.Minus, opcode.Mul, opcode.Div:
+			if !slices.Contains([]ColumnType{Int, Float, Datetime}, left.Type) || !slices.Contains([]ColumnType{Int, Float, Datetime}, right.Type) {
+				err = fmt.Errorf("only number/date column can perform [+-*/]")
+				return
+			}
+
+			colType := left.Type
+			if right.Type == Float {
+				colType = Float
+			}
+			if *bo.Operator == opcode.Div {
+				colType = Float
+			}
+
+			matchCol = &Column{Type: colType, Name: field.GetAsName()}
+		case opcode.GE, opcode.GT, opcode.LE, opcode.LT, opcode.EQ, opcode.LogicAnd,
+			opcode.LogicOr, opcode.And, opcode.Or, opcode.In, opcode.NE:
+			matchCol = &Column{Type: Boolean, Name: field.GetAsName()}
+		default:
+			err = fmt.Errorf("unsupport operator [%v]", *bo.Operator)
+			return
+		}
+		return
+	}
+
 	// 声明了表别名则从指定schema中获取
-	if field.Table != nil {
-		if _, ok := tableSchema[*field.Table]; !ok {
+	if field.GetTable() != "" {
+		if _, ok := tableSchema[field.GetTable()]; !ok {
 			err = fmt.Errorf("unkown table alias,field=%v", field.GetName())
 			return
 		}
-		for _, col := range tableSchema[*field.Table] {
-			if col.Name == field.Name.Name {
+		for _, col := range tableSchema[field.GetTable()] {
+			if col.Name == field.GetRawName() {
 				matchCol = col
 				break
 			}
@@ -1211,7 +1510,7 @@ func findColFromSchema(field *SQLField, tableSchema map[string][]*Column) (match
 	matchTable := map[string]*Column{}
 	for table, cols := range tableSchema {
 		for _, col := range cols {
-			if col.Name == field.Name.Name {
+			if col.Name == field.GetRawName() {
 				matchTable[table] = col
 				break
 			}
@@ -1269,17 +1568,21 @@ func findColumnFromJson(col Column, expr *Column) (matchCol *Column, err error) 
 	return
 }
 
-func collectBinaryOperationFields(binaryOperation *BinaryOperation) (fields []*SQLField) {
+func collectBinaryOperationFields(binaryOperation ExprField) (fields []ExprField) {
 	if binaryOperation == nil {
 		return
 	}
 
-	if binaryOperation.Operator == nil {
-		fields = append(fields, &binaryOperation.SQLField)
+	if bo, ok := binaryOperation.(*BinaryOperation); ok {
+		fields = append(fields, collectBinaryOperationFields(bo.Left)...)
+		if *bo.Operator == opcode.In {
+			fields = append(fields, bo.Right.GetArgs()...)
+		} else {
+			fields = append(fields, collectBinaryOperationFields(bo.Right)...)
+		}
+	} else {
+		fields = append(fields, binaryOperation)
 	}
-
-	fields = append(fields, collectBinaryOperationFields(binaryOperation.Left)...)
-	fields = append(fields, collectBinaryOperationFields(binaryOperation.Right)...)
 
 	return
 }
@@ -1287,13 +1590,13 @@ func collectBinaryOperationFields(binaryOperation *BinaryOperation) (fields []*S
 func validateDuplicateSelectField(sqlSelect *SQLSelect) (err error) {
 	selectFields := map[string]bool{}
 	for _, field := range sqlSelect.Fields {
-		if field.Type == SQLField_Type_WildCard {
+		if field.GetType() == SQLField_Type_WildCard {
 			var cols []*Column
-			if field.Table != nil {
-				if _, ok := sqlSelect.From.TableSchema[*field.Table]; ok {
-					cols = sqlSelect.From.TableSchema[*field.Table]
+			if field.GetTable() != "" {
+				if _, ok := sqlSelect.From.TableSchema[field.GetTable()]; ok {
+					cols = sqlSelect.From.TableSchema[field.GetTable()]
 				} else {
-					err = fmt.Errorf("invalid table alias=%v", *field.Table)
+					err = fmt.Errorf("invalid table alias=%v", field.GetTable())
 					return
 				}
 			} else {

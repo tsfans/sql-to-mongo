@@ -1,10 +1,11 @@
 package converter
 
 import (
-	"encoding/json"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
+	"time"
 
 	"github.com/pingcap/tidb/parser/opcode"
 	log "github.com/sirupsen/logrus"
@@ -32,6 +33,8 @@ const (
 	Mongo_Operator_Ne           = "$ne"
 	Mongo_Operator_And          = "$and"
 	Mongo_Operator_Or           = "$or"
+	Mongo_Operator_In           = "$in"
+	Mongo_Operator_Not          = "$not"
 	Mongo_Operator_Expr         = "$expr"
 	Mongo_Operator_Regex        = "$regex"
 	Mongo_Operator_Sum          = "$sum"
@@ -52,23 +55,39 @@ const (
 	Mongo_Operator_Multiply     = "$multiply"
 	Mongo_Operator_Divide       = "$divide"
 	Mongo_Operator_Round        = "$round"
+	Mongo_Operator_Switch       = "$switch"
+	Mongo_Operator_Type         = "$type"
+	Mongo_Operator_Now          = "$$NOW"
+	Mongo_Operator_To_Double    = "$toDouble"
+	Mongo_Operator_Floor        = "$floor"
+	Mongo_Operator_Push         = "$push"
+	Mongo_Operator_ArrayElemAt  = "$arrayElemAt"
+	Mongo_Operator_Split        = "$split"
 
 	Mongo_Arg_If       = "if"
 	Mongo_Arg_Then     = "then"
 	Mongo_Arg_Else     = "else"
 	Mongo_Arg_Let      = "let"
 	Mongo_Arg_Pipeline = "pipeline"
+	Mongo_Arg_Branches = "branches"
+	Mongo_Arg_Case     = "case"
+	Mongo_Arg_Default  = "default"
+	Mongo_Arg_Missing  = "missing"
 )
 
 var (
 	Mongo_Binary_Operator_Mapping = map[opcode.Op]string{
-		opcode.GE:   Mongo_Operator_Gte,
-		opcode.GT:   Mongo_Operator_Gt,
-		opcode.LE:   Mongo_Operator_Lte,
-		opcode.LT:   Mongo_Operator_Lt,
-		opcode.EQ:   Mongo_Operator_Eq,
-		opcode.NE:   Mongo_Operator_Ne,
-		opcode.Like: Mongo_Operator_Regex,
+		opcode.Plus:  Mongo_Operator_Add,
+		opcode.Minus: Mongo_Operator_Subtract,
+		opcode.Mul:   Mongo_Operator_Multiply,
+		opcode.Div:   Mongo_Operator_Divide,
+		opcode.GE:    Mongo_Operator_Gte,
+		opcode.GT:    Mongo_Operator_Gt,
+		opcode.LE:    Mongo_Operator_Lte,
+		opcode.LT:    Mongo_Operator_Lt,
+		opcode.EQ:    Mongo_Operator_Eq,
+		opcode.NE:    Mongo_Operator_Ne,
+		opcode.Like:  Mongo_Operator_Regex,
 	}
 
 	// graphQL字段名称正则表达式
@@ -121,7 +140,7 @@ func validateSelectField(sql *parser.SQLSelect) (err error) {
 		}
 	}
 	for _, field := range sql.Fields {
-		if field.Type == parser.SQLField_Type_WildCard {
+		if field.GetType() == parser.SQLField_Type_WildCard {
 			continue
 		}
 		// 查询结果字段名必须满足mongo和graphQL字段命名要求
@@ -175,7 +194,7 @@ func (conv *MongoQueryConverter) Convert() (query Query, err error) {
 	}
 
 	var startView string
-	startView, err = getStartView(sql, conv.sourceView)
+	startView, err = getStartView(sql.From, conv.sourceView)
 	if err != nil {
 		return
 	}
@@ -187,12 +206,6 @@ func (conv *MongoQueryConverter) Convert() (query Query, err error) {
 	if err != nil {
 		return
 	}
-
-	log.Debugf("startView=%v", startView)
-	sf, _ := json.Marshal(selectFields)
-	log.Debugf("selectFields=%v", string(sf))
-	p, _ := json.Marshal(pipeline)
-	log.Debugf("pipeline=%v", string(p))
 
 	conv.query = &MongoQuery{
 		Sql:          conv.sql,
@@ -209,11 +222,11 @@ func (conv *MongoQueryConverter) Convert() (query Query, err error) {
 func getSelectFieldsFromSql(sql *parser.SQLSelect) (cols []*parser.Column) {
 	var hasWildCard bool
 	for _, field := range sql.Fields {
-		if field.Type == parser.SQLField_Type_WildCard {
+		if field.GetType() == parser.SQLField_Type_WildCard {
 			hasWildCard = true
 			continue
 		}
-		cols = append(cols, &parser.Column{Type: field.Name.Type, Name: field.GetAsName()})
+		cols = append(cols, &parser.Column{Type: field.GetColType(), Name: field.GetAsName()})
 	}
 
 	if hasWildCard {
@@ -257,16 +270,20 @@ func getFieldsFromTable(table *parser.SQLTable) (cols []*parser.Column) {
 	return
 }
 
-func getStartView(sql *parser.SQLSelect, sourceView map[string]string) (startView string, err error) {
-	if sql.From.Left != nil && sql.From.Left.Ref != nil {
-		startView, err = getStartView(sql.From.Left.Ref, sourceView)
+func getStartView(table *parser.SQLTable, sourceView map[string]string) (startView string, err error) {
+	if table.Left != nil && table.Left.Ref != nil {
+		startView, err = getStartView(table.Left.Ref.From, sourceView)
 		return
 	}
-	if _, ok := sourceView[*sql.From.Left.Name]; !ok {
-		err = fmt.Errorf("can't find view with table %v", *sql.From.Left.Name)
+	if table.Left.Name == nil {
+		startView, err = getStartView(table.Left, sourceView)
 		return
 	}
-	startView = sourceView[*sql.From.Left.Name]
+	if _, ok := sourceView[*table.Left.Name]; !ok {
+		err = fmt.Errorf("can't find view with table %v", *table.Left.Name)
+		return
+	}
+	startView = sourceView[*table.Left.Name]
 	return
 }
 
@@ -283,33 +300,18 @@ func buildPipeline(sql *parser.SQLSelect, sourceView map[string]string) (pipelin
 	}
 
 	if sql.From.Right != nil {
-		var leftField *parser.Column
-		var rightField *parser.Column
-		leftField, rightField, err = getJoinOnField(sql.From)
-		if err != nil {
-			return
-		}
+		let, match := getJoinOnField(sql.From.On, sql.From.Right)
 		right := sql.From.Right
 		if right.Ref != nil {
 			var rightStartView string
-			rightStartView, err = getStartView(right.Ref, sourceView)
+			rightStartView, err = getStartView(right.Ref.From, sourceView)
 			if err != nil {
 				return
 			}
 
-			// let参数不能以大写字母开头，因此需要转换一下
-			letKey := strings.ToLower(leftField.Name)
-			let := bson.M{
-				letKey: fmt.Sprintf("$%v", leftField.Name),
-			}
-			match := bson.M{
+			pipelineMatch := bson.M{
 				Mongo_Stage_Macth: bson.M{
-					Mongo_Operator_Expr: bson.M{
-						Mongo_Operator_Eq: bson.A{
-							fmt.Sprintf("$$%v", letKey),
-							fmt.Sprintf("$%v", rightField.Name),
-						},
-					},
+					Mongo_Operator_Expr: match,
 				},
 			}
 			var nestedPipeline bson.A
@@ -317,7 +319,7 @@ func buildPipeline(sql *parser.SQLSelect, sourceView map[string]string) (pipelin
 			if err != nil {
 				return
 			}
-			nestedPipeline = append(nestedPipeline, match)
+			nestedPipeline = append(nestedPipeline, pipelineMatch)
 			pipeline = append(pipeline,
 				bson.M{
 					Mongo_Stage_Lookup: bson.M{
@@ -339,14 +341,19 @@ func buildPipeline(sql *parser.SQLSelect, sourceView map[string]string) (pipelin
 				err = fmt.Errorf("can't find view with name [%v]", right.GetAsName())
 				return
 			}
+			pipelineMatch := bson.M{
+				Mongo_Stage_Macth: bson.M{
+					Mongo_Operator_Expr: match,
+				},
+			}
 			// 需要执行连接查询
 			pipeline = append(pipeline,
 				bson.M{
 					Mongo_Stage_Lookup: bson.M{
-						"from":         view,
-						"localField":   leftField.Name,
-						"foreignField": rightField.Name,
-						"as":           right.GetAsName(),
+						"from":             view,
+						Mongo_Arg_Let:      let,
+						Mongo_Arg_Pipeline: bson.A{pipelineMatch},
+						"as":               right.GetAsName(),
 					},
 				},
 				bson.M{
@@ -360,7 +367,9 @@ func buildPipeline(sql *parser.SQLSelect, sourceView map[string]string) (pipelin
 
 	if sql.Where != nil {
 		pipeline = append(pipeline, bson.M{
-			Mongo_Stage_Macth: convertBinaryOperation(sql.Where, sql.From.Right),
+			Mongo_Stage_Macth: bson.M{
+				Mongo_Operator_Expr: parseFieldValue(sql.Where, sql.From.Right, false),
+			},
 		})
 	}
 
@@ -377,7 +386,7 @@ func buildPipeline(sql *parser.SQLSelect, sourceView map[string]string) (pipelin
 		}
 
 		for _, field := range sql.Fields {
-			if field.Type == parser.SQLField_Type_Normal || field.Type == parser.SQLField_Type_Value || field.Name.Type == parser.Json {
+			if field.GetType() == parser.SQLField_Type_Normal || field.GetType() == parser.SQLField_Type_Value || field.GetColType() == parser.Json {
 				key := strings.ReplaceAll(parseFieldKey(field, sql.From.Right), ".", "_")
 				if val, ok := replace[key]; ok {
 					delete(replace, key)
@@ -397,7 +406,7 @@ func buildPipeline(sql *parser.SQLSelect, sourceView map[string]string) (pipelin
 			}
 
 			group[field.GetAsName()] = parseFieldValue(field, sql.From.Right, false)
-			if field.Distinct && field.Func != nil && *field.Func == parser.SQLFuncName_Count {
+			if field.GetDistinct() && field.GetFunc() == parser.SQLFuncName_Count {
 				replace[field.GetAsName()] = bson.M{Mongo_Operator_Size: fmt.Sprintf("$%v", field.GetAsName())}
 			} else {
 				replace[field.GetAsName()] = fmt.Sprintf("$%v", field.GetAsName())
@@ -413,17 +422,19 @@ func buildPipeline(sql *parser.SQLSelect, sourceView map[string]string) (pipelin
 
 		if sql.Having != nil {
 			pipeline = append(pipeline, bson.M{
-				Mongo_Stage_Macth: convertBinaryOperation(sql.Having, sql.From.Right),
+				Mongo_Stage_Macth: bson.M{
+					Mongo_Operator_Expr: parseFieldValue(sql.Having.(*parser.BinaryOperation), sql.From.Right, false),
+				},
 			})
 		}
 	} else {
 		var hasWildCard bool
 		aggFunc := sql.Distinct
 		for _, field := range sql.Fields {
-			if field.Type == parser.SQLField_Type_WildCard {
+			if field.GetType() == parser.SQLField_Type_WildCard {
 				hasWildCard = true
 			}
-			if field.Type == parser.SQLField_Type_Agg_Func || field.HasDistinct() {
+			if field.GetType() == parser.SQLField_Type_Agg_Func || field.HasDistinct() {
 				aggFunc = true
 			}
 		}
@@ -432,7 +443,7 @@ func buildPipeline(sql *parser.SQLSelect, sourceView map[string]string) (pipelin
 				// 还有其他字段需要输出
 				addFields := bson.M{}
 				for _, field := range sql.Fields {
-					if field.Type == parser.SQLField_Type_WildCard {
+					if field.GetType() == parser.SQLField_Type_WildCard {
 						continue
 					}
 					addFields[field.GetAsName()] = parseFieldValue(field, sql.From.Right, false)
@@ -456,7 +467,7 @@ func buildPipeline(sql *parser.SQLSelect, sourceView map[string]string) (pipelin
 						continue
 					}
 					group[field.GetAsName()] = parseFieldValue(field, sql.From.Right, false)
-					if field.Distinct && field.Func != nil && *field.Func == parser.SQLFuncName_Count {
+					if field.GetDistinct() && field.GetFunc() == parser.SQLFuncName_Count {
 						replace[field.GetAsName()] = bson.M{Mongo_Operator_Size: fmt.Sprintf("$%v", field.GetAsName())}
 					} else {
 						replace[field.GetAsName()] = fmt.Sprintf("$%v", field.GetAsName())
@@ -513,21 +524,33 @@ func buildPipeline(sql *parser.SQLSelect, sourceView map[string]string) (pipelin
 	return
 }
 
-// // 函数带去重逻辑，需要先获取各参数的值，然后在replace中执行函数，因为去重需要两步
-func shouldSplitToTwoStep(field *parser.SQLField) bool {
-	return (field.Type == parser.SQLField_Type_Agg_Func || field.Type == parser.SQLField_Type_Func) && field.HasDistinct()
+// 1)对聚合函数使用取值函数
+// 2)聚合函数带去重逻辑，需要先获取各参数的值，然后在replace中执行函数，因为去重需要两步
+func shouldSplitToTwoStep(field parser.ExprField) bool {
+	if field.GetType() == parser.SQLField_Type_Func {
+		return true
+	}
+	if field.GetType() == parser.SQLField_Type_Agg_Func && field.HasDistinct() {
+		return true
+	}
+	if bo, ok := field.(*parser.BinaryOperation); ok {
+		if slices.Contains([]opcode.Op{opcode.Plus, opcode.Minus, opcode.Mul, opcode.Div}, *bo.Operator) {
+			return true
+		}
+	}
+	return false
 }
 
-func spiltToTwoStep(field *parser.SQLField, group bson.M, replace bson.M, right *parser.SQLTable) {
+func spiltToTwoStep(field parser.ExprField, group bson.M, replace bson.M, right *parser.SQLTable) {
 	// 函数带去重逻辑，需要先获取各参数的值，然后在replace中执行函数，因为去重需要两步
 	replaceField := buildSplitReplaceField(field, group, right, "")
 	replace[field.GetAsName()] = parseFieldValue(replaceField, right, true)
 }
 
-func buildSplitReplaceField(field *parser.SQLField, group bson.M, right *parser.SQLTable, argPrefix string) (replaceField *parser.SQLField) {
-	var args []*parser.SQLField
-	for i := 0; i < len(field.Args); i++ {
-		funArg := field.Args[i]
+func buildSplitReplaceField(field parser.ExprField, group bson.M, right *parser.SQLTable, argPrefix string) (replaceField parser.ExprField) {
+	var args []parser.ExprField
+	for i := 0; i < len(field.GetArgs()); i++ {
+		funArg := field.GetArgs()[i]
 		var argName string
 		if argPrefix == "" {
 			argName = fmt.Sprintf("%v_%v", field.GetAsName(), i)
@@ -535,27 +558,14 @@ func buildSplitReplaceField(field *parser.SQLField, group bson.M, right *parser.
 			argName = fmt.Sprintf("%v_%v", argPrefix, i)
 		}
 
-		if funArg.HasDistinct() {
-			// 将distinct对象addToSet
-			if funArg.Distinct && (funArg.Type == parser.SQLField_Type_Normal || funArg.Type == parser.SQLField_Type_Value) {
-				group[argName] = parseFieldValue(funArg, right, false)
-				args = append(args, &parser.SQLField{
-					Type: parser.SQLField_Type_Normal,
-					Name: &parser.Column{
-						Name: argName,
-					},
-				})
-				continue
-			}
-			// 其他函数递归求解
+		if shouldSplitToTwoStep(funArg) {
+			// 需要拆分的函数递归求解
 			args = append(args, buildSplitReplaceField(funArg, group, right, argName))
-		} else {
+		} else if funArg.IsAllValue() {
 			// 常量无需group，直接放到最后计算
-			if funArg.IsAllValue() {
-				args = append(args, funArg)
-				continue
-			}
-			// 不带distinct的函数直接求值
+			args = append(args, funArg)
+		} else {
+			// 无需拆分的函数直接求值
 			group[argName] = parseFieldValue(funArg, right, false)
 			args = append(args, &parser.SQLField{
 				Type: parser.SQLField_Type_Normal,
@@ -566,131 +576,197 @@ func buildSplitReplaceField(field *parser.SQLField, group bson.M, right *parser.
 		}
 	}
 
-	replaceField = &parser.SQLField{
-		Type:     field.Type,
-		Func:     field.Func,
-		Name:     field.Name,
-		Distinct: field.Distinct,
-		Args:     args,
+	if bo, ok := field.(*parser.BinaryOperation); ok {
+		replaceField = &parser.BinaryOperation{
+			Operator: bo.Operator,
+			Left:     args[0],
+			Right:    args[1],
+		}
+	} else {
+		fn := field.GetFunc()
+		replaceField = &parser.SQLField{
+			Type:     field.GetType(),
+			Func:     &fn,
+			Name:     field.GetColName(),
+			Distinct: field.GetDistinct(),
+			Args:     args,
+		}
 	}
 
 	return
 }
 
-func getJoinOnField(table *parser.SQLTable) (leftField *parser.Column, rightField *parser.Column, err error) {
-	joinOn := table.On
-	for tableName, cols := range table.Left.TableSchema {
-		for _, col := range cols {
-			if joinOn.Left.Table != nil {
-				if *joinOn.Left.Table == tableName && joinOn.Left.Name.Name == col.Name {
-					leftField = col
-					break
-				}
-			} else {
-				if joinOn.Left.Name.Name == col.Name {
-					leftField = col
-					break
-				}
-			}
-			if joinOn.Right.Table != nil {
-				if *joinOn.Right.Table == tableName && joinOn.Right.Name.Name == col.Name {
-					leftField = col
-					break
-				}
-			} else {
-				if joinOn.Right.Name.Name == col.Name {
-					leftField = col
-					break
-				}
-			}
-		}
-	}
-
-	// 表连接条件必须是左右表字段，两个字段都在一边则无效
-	if (leftField == nil && rightField == nil) || (leftField != nil && rightField != nil) {
-		err = fmt.Errorf("invalid join on condition")
+func getJoinOnField(joinOn parser.ExprField, rightTable *parser.SQLTable) (let bson.M, match bson.M) {
+	let = bson.M{}
+	match = bson.M{}
+	var bo *parser.BinaryOperation
+	var ok bool
+	if bo, ok = joinOn.(*parser.BinaryOperation); !ok {
 		return
 	}
-
-	for tableName, cols := range table.Right.TableSchema {
-		for _, col := range cols {
-			if joinOn.Left.Table != nil {
-				if *joinOn.Left.Table == tableName && joinOn.Left.Name.Name == col.Name {
-					rightField = col
-					break
-				}
-			} else {
-				if joinOn.Left.Name.Name == col.Name {
-					rightField = col
-					break
-				}
-			}
-			if joinOn.Right.Table != nil {
-				if *joinOn.Right.Table == tableName && joinOn.Right.Name.Name == col.Name {
-					rightField = col
-					break
-				}
-			} else {
-				if joinOn.Right.Name.Name == col.Name {
-					rightField = col
-					break
-				}
-			}
-		}
-	}
-
-	return
-}
-
-func convertBinaryOperation(bo *parser.BinaryOperation, right *parser.SQLTable) (match bson.M) {
 	if *bo.Operator == opcode.LogicAnd {
-		left := convertBinaryOperation(bo.Left, right)
-		right := convertBinaryOperation(bo.Right, right)
-		match = bson.M{
-			Mongo_Operator_Expr: bson.M{
-				Mongo_Operator_And: bson.A{
-					left[Mongo_Operator_Expr],
-					right[Mongo_Operator_Expr],
-				},
-			},
+		leftLet, leftMatch := getJoinOnField(bo.Left, rightTable)
+		rightLet, rightMatch := getJoinOnField(bo.Right, rightTable)
+		for k, v := range leftLet {
+			let[k] = v
 		}
+		for k, v := range rightLet {
+			let[k] = v
+		}
+		match = bson.M{Mongo_Operator_And: bson.A{leftMatch, rightMatch}}
 		return
 	}
 	if *bo.Operator == opcode.LogicOr {
-		left := convertBinaryOperation(bo.Left, right)
-		right := convertBinaryOperation(bo.Right, right)
-		match = bson.M{
-			Mongo_Operator_Expr: bson.M{
-				Mongo_Operator_Or: bson.A{
-					left[Mongo_Operator_Expr],
-					right[Mongo_Operator_Expr],
-				},
-			},
+		leftLet, leftMatch := getJoinOnField(bo.Left, rightTable)
+		rightLet, rightMatch := getJoinOnField(bo.Right, rightTable)
+		for k, v := range leftLet {
+			let[k] = v
 		}
+		for k, v := range rightLet {
+			let[k] = v
+		}
+		match = bson.M{Mongo_Operator_Or: bson.A{leftMatch, rightMatch}}
 		return
 	}
 
-	leftVal := parseFieldValue(&bo.Left.SQLField, right, false)
-	rightVal := parseFieldValue(&bo.Right.SQLField, right, false)
-	if *bo.Operator == opcode.Like {
-		rightVal = fmt.Sprintf(".*%v.*", rightVal)
-	}
-	match = bson.M{
-		Mongo_Operator_Expr: bson.M{
-			Mongo_Binary_Operator_Mapping[*bo.Operator]: bson.A{
-				leftVal,
-				rightVal,
-			},
-		},
+	leftVal := parseFieldValue(bo.Left, nil, true)
+	rightVal := parseFieldValue(bo.Right, nil, true)
+	if _, ok := rightTable.TableSchema[bo.Right.GetTable()]; ok {
+		// 左边字段在左表，右边字段在右表
+		if bo.Left.GetType() == parser.SQLField_Type_Value {
+			if val, ok := leftVal.(int64); ok && bo.Right.GetColType() == parser.Boolean {
+				match[Mongo_Operator_Or] = bson.A{
+					bson.M{Mongo_Binary_Operator_Mapping[*bo.Operator]: bson.A{leftVal, rightVal}},
+					bson.M{Mongo_Binary_Operator_Mapping[*bo.Operator]: bson.A{val > 0, rightVal}},
+				}
+			} else {
+				match[Mongo_Binary_Operator_Mapping[*bo.Operator]] = bson.A{leftVal, rightVal}
+			}
+		} else {
+			letKey := strings.ToLower(bo.Left.GetRawName())
+			let[letKey] = leftVal
+			match[Mongo_Binary_Operator_Mapping[*bo.Operator]] = bson.A{fmt.Sprintf("$$%v", letKey), rightVal}
+		}
+
+	} else {
+		// 左边字段在右表，右边字段在左表
+		if bo.Right.GetType() == parser.SQLField_Type_Value {
+			if val, ok := rightVal.(int64); ok && bo.Left.GetColType() == parser.Boolean {
+				match[Mongo_Operator_Or] = bson.A{
+					bson.M{Mongo_Binary_Operator_Mapping[*bo.Operator]: bson.A{rightVal, leftVal}},
+					bson.M{Mongo_Binary_Operator_Mapping[*bo.Operator]: bson.A{val > 0, leftVal}},
+				}
+			} else {
+				match[Mongo_Binary_Operator_Mapping[*bo.Operator]] = bson.A{leftVal, rightVal}
+			}
+		} else {
+			letKey := strings.ToLower(bo.Right.GetRawName())
+			let[letKey] = rightVal
+			match[Mongo_Binary_Operator_Mapping[*bo.Operator]] = bson.A{fmt.Sprintf("$$%v", letKey), leftVal}
+		}
 	}
 
 	return
 }
 
-func parseFieldValue(field *parser.SQLField, right *parser.SQLTable, isReplace bool) (val any) {
-	switch field.Type {
+func convertBinaryOperation(field parser.ExprField, rightTable *parser.SQLTable, isReplace bool) (match bson.M) {
+	var bo *parser.BinaryOperation
+	var ok bool
+	if bo, ok = field.(*parser.BinaryOperation); !ok {
+		return
+	}
+	if *bo.Operator == opcode.LogicAnd {
+		left := convertBinaryOperation(bo.Left, rightTable, isReplace)
+		right := convertBinaryOperation(bo.Right, rightTable, isReplace)
+		match = bson.M{Mongo_Operator_And: bson.A{left, right}}
+		return
+	}
+	if *bo.Operator == opcode.LogicOr {
+		left := convertBinaryOperation(bo.Left, rightTable, isReplace)
+		right := convertBinaryOperation(bo.Right, rightTable, isReplace)
+		match = bson.M{Mongo_Operator_Or: bson.A{left, right}}
+		return
+	}
+	if *bo.Operator == opcode.In {
+		left := parseFieldValue(bo.Left, rightTable, isReplace)
+		var right bson.A
+		for _, arg := range bo.Right.GetArgs() {
+			right = append(right, parseFieldValue(arg, rightTable, isReplace))
+		}
+		match = bson.M{Mongo_Operator_In: bson.A{left, right}}
+		if bo.Not {
+			match = bson.M{Mongo_Operator_Not: match}
+		}
+		return
+	}
+
+	leftVal := parseFieldValue(bo.Left, rightTable, isReplace)
+	rightVal := parseFieldValue(bo.Right, rightTable, isReplace)
+	if *bo.Operator == opcode.Like {
+		rightVal = fmt.Sprintf(".*%v.*", rightVal)
+	}
+	if bo.Left.GetColType() == parser.Datetime {
+		// 解析为时间
+		timeVal, err := ParseTime("", fmt.Sprint(rightVal))
+		if err != nil {
+			log.Warnf("invalid datetime value=%v", rightVal)
+		} else {
+			rightVal = timeVal
+		}
+	}
+
+	if *bo.Operator == opcode.EQ {
+		if rightVal == nil {
+			// 字段不存在也认为是空
+			match = bson.M{
+				Mongo_Operator_Or: bson.A{
+					bson.M{Mongo_Operator_Eq: bson.A{leftVal, rightVal}},
+					bson.M{Mongo_Operator_Eq: bson.A{bson.M{Mongo_Operator_Type: leftVal}, Mongo_Arg_Missing}},
+				},
+			}
+			return
+		}
+
+		if intVal, ok := rightVal.(int64); ok {
+			if intVal == 0 || intVal == 1 {
+				// 可能是匹配布尔值
+				match = bson.M{
+					Mongo_Operator_Or: bson.A{
+						bson.M{Mongo_Operator_Eq: bson.A{leftVal, rightVal}},
+						bson.M{Mongo_Operator_Eq: bson.A{leftVal, intVal == 1}},
+					},
+				}
+				return
+			}
+		}
+	}
+
+	if *bo.Operator == opcode.NE && rightVal == nil {
+		// 字段不存在也认为是空
+		match = bson.M{
+			Mongo_Operator_And: bson.A{
+				bson.M{Mongo_Operator_Ne: bson.A{leftVal, rightVal}},
+				bson.M{Mongo_Operator_Ne: bson.A{bson.M{Mongo_Operator_Type: leftVal}, Mongo_Arg_Missing}},
+			},
+		}
+		return
+	}
+
+	match = bson.M{Mongo_Binary_Operator_Mapping[*bo.Operator]: bson.A{leftVal, rightVal}}
+
+	return
+}
+
+func parseFieldValue(field parser.ExprField, right *parser.SQLTable, isReplace bool) (val any) {
+	if bo, ok := field.(*parser.BinaryOperation); ok {
+		// 二元表达式单独处理
+		val = convertBinaryOperation(bo, right, isReplace)
+		return
+	}
+
+	switch field.GetType() {
 	case parser.SQLField_Type_Normal:
-		if field.Distinct {
+		if field.GetDistinct() {
 			val = bson.M{
 				Mongo_Operator_AddToSet: fmt.Sprintf("$%v", parseFieldKey(field, right)),
 			}
@@ -698,103 +774,115 @@ func parseFieldValue(field *parser.SQLField, right *parser.SQLTable, isReplace b
 			val = fmt.Sprintf("$%v", parseFieldKey(field, right))
 		}
 	case parser.SQLField_Type_Func:
-		switch *field.Func {
+		switch field.GetFunc() {
 		case parser.SQLFuncName_Json_Extract:
 			val = fmt.Sprintf("$%v", parseFieldKey(field, right))
 		case parser.SQLFuncName_Year:
 			val = bson.M{
-				Mongo_Operator_Year: parseFieldValue(field.Args[0], right, isReplace),
+				Mongo_Operator_Year: parseFieldValue(field.GetArgs()[0], right, isReplace),
 			}
 		case parser.SQLFuncName_Month:
 			val = bson.M{
-				Mongo_Operator_Month: parseFieldValue(field.Args[0], right, isReplace),
+				Mongo_Operator_Month: parseFieldValue(field.GetArgs()[0], right, isReplace),
 			}
 		case parser.SQLFuncName_Day:
 			val = bson.M{
-				Mongo_Operator_DayOfMonth: parseFieldValue(field.Args[0], right, isReplace),
+				Mongo_Operator_DayOfMonth: parseFieldValue(field.GetArgs()[0], right, isReplace),
 			}
 		case parser.SQLFuncName_Hour:
 			val = bson.M{
-				Mongo_Operator_Hour: parseFieldValue(field.Args[0], right, isReplace),
+				Mongo_Operator_Hour: parseFieldValue(field.GetArgs()[0], right, isReplace),
 			}
 		case parser.SQLFuncName_Minute:
 			val = bson.M{
-				Mongo_Operator_Minute: parseFieldValue(field.Args[0], right, isReplace),
+				Mongo_Operator_Minute: parseFieldValue(field.GetArgs()[0], right, isReplace),
 			}
 		case parser.SQLFuncName_Second:
 			val = bson.M{
-				Mongo_Operator_Second: parseFieldValue(field.Args[0], right, isReplace),
+				Mongo_Operator_Second: parseFieldValue(field.GetArgs()[0], right, isReplace),
 			}
 		case parser.SQLFuncName_Date_Format:
 			val = bson.M{
 				Mongo_Operator_DateToString: bson.M{
-					"date":   parseFieldValue(field.Args[0], right, isReplace),
-					"format": parseFieldValue(field.Args[1], right, isReplace),
-				},
-			}
-		case parser.SQLFuncName_Plus:
-			val = bson.M{
-				Mongo_Operator_Add: bson.A{
-					parseFieldValue(field.Args[0], right, isReplace),
-					parseFieldValue(field.Args[1], right, isReplace),
-				},
-			}
-		case parser.SQLFuncName_Minus:
-			val = bson.M{
-				Mongo_Operator_Subtract: bson.A{
-					parseFieldValue(field.Args[0], right, isReplace),
-					parseFieldValue(field.Args[1], right, isReplace),
-				},
-			}
-		case parser.SQLFuncName_Mul:
-			val = bson.M{
-				Mongo_Operator_Multiply: bson.A{
-					parseFieldValue(field.Args[0], right, isReplace),
-					parseFieldValue(field.Args[1], right, isReplace),
-				},
-			}
-		case parser.SQLFuncName_Div:
-			val = bson.M{
-				Mongo_Operator_Divide: bson.A{
-					parseFieldValue(field.Args[0], right, isReplace),
-					parseFieldValue(field.Args[1], right, isReplace),
+					"date":   parseFieldValue(field.GetArgs()[0], right, isReplace),
+					"format": parseFieldValue(field.GetArgs()[1], right, isReplace),
 				},
 			}
 		case parser.SQLFuncName_Round:
 			val = bson.M{
 				Mongo_Operator_Round: bson.A{
-					parseFieldValue(field.Args[0], right, isReplace),
-					parseFieldValue(field.Args[1], right, isReplace),
+					parseFieldValue(field.GetArgs()[0], right, isReplace),
+					parseFieldValue(field.GetArgs()[1], right, isReplace),
 				},
 			}
+		case parser.SQLFuncName_If:
+			val = bson.M{
+				Mongo_Operator_Cond: bson.M{
+					Mongo_Arg_If:   parseFieldValue(field.GetArgs()[0], right, isReplace),
+					Mongo_Arg_Then: parseFieldValue(field.GetArgs()[1], right, isReplace),
+					Mongo_Arg_Else: parseFieldValue(field.GetArgs()[2], right, isReplace),
+				},
+			}
+		case parser.SQLFuncName_Case:
+			caseWhen := field.(*parser.CaseWhenExpr)
+			var branches bson.A
+			for _, whenClause := range caseWhen.WhenClauses {
+				branches = append(branches, bson.M{
+					Mongo_Arg_Case: parseFieldValue(whenClause.Expr, right, isReplace),
+					Mongo_Arg_Then: parseFieldValue(whenClause.Result, right, isReplace),
+				})
+			}
+			mongoSwitch := bson.M{Mongo_Arg_Branches: branches}
+			if caseWhen.Else != nil {
+				mongoSwitch[Mongo_Arg_Default] = parseFieldValue(caseWhen.Else, right, isReplace)
+			}
+			val = bson.M{
+				Mongo_Operator_Switch: mongoSwitch,
+			}
+		case parser.SQLFuncName_Now:
+			val = Mongo_Operator_Now
+		case parser.SQLFuncName_To_Double:
+			val = parseFieldValue(field.GetArgs()[0], right, isReplace)
+			val = bson.M{Mongo_Operator_To_Double: val}
+		case parser.SQLFuncName_To_Floor:
+			val = parseFieldValue(field.GetArgs()[0], right, isReplace)
+			val = bson.M{Mongo_Operator_Floor: val}
+		case parser.SQLFuncName_Substring_Index:
+			arg1 := parseFieldValue(field.GetArgs()[0], right, isReplace)
+			arg2 := parseFieldValue(field.GetArgs()[1], right, isReplace)
+			arg3 := parseFieldValue(field.GetArgs()[2], right, isReplace)
+			val = bson.M{Mongo_Operator_ArrayElemAt: bson.A{
+				bson.M{Mongo_Operator_Split: bson.A{arg1, arg2}},
+				arg3,
+			}}
 		}
 	case parser.SQLField_Type_Agg_Func:
-		switch *field.Func {
+		switch field.GetFunc() {
 		case parser.SQLFuncName_Sum, parser.SQLFuncName_Avg, parser.SQLFuncName_Max, parser.SQLFuncName_Min:
-			if field.Distinct {
-				val = parseFieldValue(field.Args[0], right, isReplace)
+			if field.GetDistinct() {
+				val = parseFieldValue(field.GetArgs()[0], right, isReplace)
 				if isReplace {
-					val = bson.M{fmt.Sprintf("$%v", strings.ToLower(*field.Func)): val}
+					val = bson.M{fmt.Sprintf("$%v", strings.ToLower(field.GetFunc())): val}
 				}
 			} else {
 				val = bson.M{
-					fmt.Sprintf("$%v", strings.ToLower(*field.Func)): parseFieldValue(field.Args[0], right, isReplace),
+					fmt.Sprintf("$%v", strings.ToLower(field.GetFunc())): parseFieldValue(field.GetArgs()[0], right, isReplace),
 				}
 			}
 		case parser.SQLFuncName_Count:
-			if field.Distinct {
-				val = parseFieldValue(field.Args[0], right, isReplace)
+			if field.GetDistinct() {
+				val = parseFieldValue(field.GetArgs()[0], right, isReplace)
 				if isReplace {
 					// count常量结果为1
-					if field.Args[0].Type == parser.SQLField_Type_Value {
+					if field.GetArgs()[0].GetType() == parser.SQLField_Type_Value {
 						val = 1
 					} else {
 						val = bson.M{Mongo_Operator_Size: val}
 					}
 				}
 			} else {
-				arg := field.Args[0]
-				if arg.Type == parser.SQLField_Type_Normal {
+				arg := field.GetArgs()[0]
+				if arg.GetType() == parser.SQLField_Type_Normal {
 					// 参数为具体字段则需要根据具体字段是否存在来统计
 					val = bson.M{
 						Mongo_Operator_Sum: bson.M{
@@ -817,34 +905,53 @@ func parseFieldValue(field *parser.SQLField, right *parser.SQLTable, isReplace b
 					}
 				}
 			}
+		case parser.SQLFuncName_Json_Arr_Agg:
+			val = bson.M{Mongo_Operator_Push: parseFieldValue(field.GetArgs()[0], right, isReplace)}
 		}
 	case parser.SQLField_Type_Value:
-		val = field.Value
+		val = field.GetValue()
 	}
 
 	return
 }
 
-func parseFieldKey(field *parser.SQLField, right *parser.SQLTable) (key string) {
-	switch field.Type {
+func parseFieldKey(field parser.ExprField, right *parser.SQLTable) (key string) {
+	switch field.GetType() {
 	case parser.SQLField_Type_Normal:
-		key = field.Name.Name
+		key = field.GetRawName()
 	case parser.SQLField_Type_Func:
-		if *field.Func == parser.SQLFuncName_Json_Extract {
-			col := field.Args[0]
-			val := field.Args[1]
-			path := fmt.Sprint(val.Value)[2:]
-			key = fmt.Sprintf("%v.%v", col.Name.Name, path)
+		if field.GetFunc() == parser.SQLFuncName_Json_Extract {
+			col := field.GetArgs()[0]
+			val := field.GetArgs()[1]
+			path := fmt.Sprint(val.GetValue())[2:]
+			key = fmt.Sprintf("%v.%v", col.GetRawName(), path)
 		} else {
 			key = field.GetAsName()
 		}
 	case parser.SQLField_Type_Value:
-		key = fmt.Sprint(field.Value)
+		key = fmt.Sprint(field.GetValue())
 	}
 
-	if field.Table != nil && right != nil && *field.Table == right.GetAsName() {
-		key = fmt.Sprintf("%v.%v", *field.Table, key)
+	if field.GetTable() != "" && right != nil && field.GetTable() == right.GetAsName() {
+		key = fmt.Sprintf("%v.%v", field.GetTable(), key)
 	}
+
+	return
+}
+
+// 解析时间
+// layout 时间格式，未指定则默认使用RFC3339
+// 时间字符串，长度为10说明只包含日期，使用DateOnly格式
+func ParseTime(layout, value string) (timeVal time.Time, err error) {
+	if layout == "" {
+		layout = time.RFC3339
+	}
+
+	if len(value) == 10 {
+		layout = time.DateOnly
+	}
+
+	timeVal, err = time.Parse(layout, value)
 
 	return
 }

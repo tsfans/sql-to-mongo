@@ -22,6 +22,7 @@ var (
 			{Type: parser.Datetime, Name: "entryDate"},
 			{Type: parser.String, Name: "grade"},
 			{Type: parser.Int, Name: "class"},
+			{Type: parser.String, Name: "address"},
 		},
 		"homework": {
 			{Type: parser.Int, Name: "id"},
@@ -30,6 +31,7 @@ var (
 			{Type: parser.Int, Name: "stuId"},
 			{Type: parser.String, Name: "subject"},
 			{Type: parser.Float, Name: "score"},
+			{Type: parser.String, Name: "scoreStr"},
 		},
 		"employee": {
 			{Type: parser.Int, Name: "id"},
@@ -214,16 +216,34 @@ var (
 		"group by employeeName " +
 		"having id_sum >= 0 " +
 		"order by id_sum desc "
-	SELECT25        = "select distinct name from employee"
-	SELECT26        = "select sum(distinct id) as res from employee"
-	SELECT27        = "select avg(distinct id) as res from employee"
-	SELECT28        = "select max(distinct id) as res from employee"
-	SELECT29        = "select min(distinct id) as res from employee"
-	SELECT30        = "select sum(distinct id)+1 as res from employee"
-	SELECT31        = "select count(distinct name)/2+1/2 as name_cnt from employee"
-	SELECT32        = "select sum(id) as id_sum,year(createdAt) as createdYear from employee group by createdYear having id_sum > 0 order by id_sum"
-	SELECT_LIST     = []string{SELECT2}
+	SELECT25  = "select distinct name from employee"
+	SELECT26  = "select sum(distinct id) as res from employee"
+	SELECT27  = "select avg(distinct id) as res from employee"
+	SELECT28  = "select max(distinct id) as res from employee"
+	SELECT29  = "select min(distinct id) as res from employee"
+	SELECT30  = "select sum(distinct id)+1 as res from employee"
+	SELECT31  = "select count(distinct name)/2+1/2 as name_cnt from employee"
+	SELECT32  = "select sum(id) as id_sum,year(createdAt) as createdYear from employee group by createdYear having id_sum > 0 order by id_sum"
+	If        = "select if(id<18419167,'OLD','NEW') as dataType from employee where id > 0"
+	Case_When = "select " +
+		"case " +
+		"when id < 18419167 then 'OLD' " +
+		"when id >= 18419167 then 'NEW' " +
+		"else 'MID' " +
+		"end " +
+		"as dataType from employee where id >= 0"
+	Now             = "select id, now() as now from employee where id > 0"
+	To_Double       = "select id, to_double(scoreStr) as score from homework where id > 0"
+	Floor           = "select id, floor(score) as score from homework where id > 0"
+	Substring_Index = "select id, substring_index(address, '/', 0) as city from student where id > 0"
+	SELECT_LIST     = []string{Substring_Index}
 	SELECT_LIST_ALL = []string{
+		If,
+		Case_When,
+		Now,
+		To_Double,
+		Floor,
+		Substring_Index,
 		SELECT,
 		SELECT2,
 		SELECT3,
@@ -260,8 +280,9 @@ var (
 )
 
 func TestMongoQueryConverter(t *testing.T) {
-	for _, sql := range SELECT_LIST_ALL {
-		sqlParser := parser.NewMySQLSelectParser(sql, TableSchema)
+	for _, rawSql := range SELECT_LIST_ALL {
+		fmt.Println(rawSql)
+		sqlParser := parser.NewMySQLSelectParser(rawSql, TableSchema)
 		sql, err := sqlParser.Parse()
 		if err != nil {
 			t.Errorf("parse failed,err=%v", err.Error())

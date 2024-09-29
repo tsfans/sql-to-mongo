@@ -15,7 +15,7 @@ Convert SQL statement to mongo statement.
 ### Example
 
 ```shell
-  go get github.com/tsfans/sql-to-mongo@v1.0.3
+  go get github.com/tsfans/sql-to-mongo@v1.0.4
 ```
 
 ```go
@@ -69,7 +69,7 @@ func main() {
 
  mongoQuery := query.(*converter.MongoQuery)
 
- // StartView use to start mongo arrge
+ // StartView use to start mongo aggregate
  fmt.Println(mongoQuery.StartView)
 
  // SelectFields represent final result fields
@@ -89,29 +89,37 @@ more usage see [converter_test](https://github.com/tsfans/sql-to-mongo/blob/main
 ## Support SQL syntax
 
 Right now only support **SELECT statement**, The specific content is as follows:
-| Syntax    |
-| --------- |
-| SELECT |
-| LEFT JOIN |
-| SUM |
-| AVG |
-| COUNT |
-| MAX |
-| MIN |
-| YEAR |
-| MONTH |
-| DAY |
-| HOUR |
-| MINUTE |
-| SECOND |
-| DATE_FORMAT |
-| + |
-| - |
-| * |
-| / |
-| ROUND |
+| Syntax    | Comment |
+| --------- | --------- |
+| SELECT ||
+| LEFT JOIN ||
+| GROUP BY ||
+| ORDER BY ||
+| LIMIT ||
+| + ||
+| - ||
+| * ||
+| / ||
+| SUM ||
+| AVG ||
+| COUNT ||
+| MAX ||
+| MIN ||
+| YEAR ||
+| MONTH ||
+| DAY ||
+| HOUR ||
+| MINUTE ||
+| SECOND ||
+| DATE_FORMAT ||
+| ROUND ||
+| IF ||
+| CASE WHEN ||
+| NOW() ||
+| TO_DOUBLE ||
+| FLOOR ||
+| SUBSTRING_INDEX |SUBSTRING_INDEX(model_file_key, '/', 3), the third arg `3` means array index(0, 1, 2, 3)|
 
 ## Future
 
-- Support SQL INSERT||UPDATE||DELETE syntax.
 - Support More SQL Functions.
