@@ -232,12 +232,13 @@ var (
 		"else 'MID' " +
 		"end " +
 		"as dataType from employee where id >= 0"
-	Now             = "select id, now() as now from employee where id > 0"
-	To_Double       = "select id, to_double(scoreStr) as score from homework where id > 0"
-	Floor           = "select id, floor(score) as score from homework where id > 0"
-	Substring_Index = "select id, substring_index(address, '/', 0) as city from student where id > 0"
-	SELECT_LIST     = []string{Substring_Index}
-	SELECT_LIST_ALL = []string{
+	Now                = "select id, now() as now from employee where id > 0"
+	To_Double          = "select id, to_double(scoreStr) as score from homework where id > 0"
+	Floor              = "select id, floor(score) as score from homework where id > 0"
+	Substring_Index    = "select id, substring_index(address, '/', 0) as city from student where id > 0"
+	DateTruncate_Index = "select id, DATE(createdAt) as createdDate from student where id > 0"
+	SELECT_LIST        = []string{DateTruncate_Index}
+	SELECT_LIST_ALL    = []string{
 		If,
 		Case_When,
 		Now,
@@ -280,7 +281,7 @@ var (
 )
 
 func TestMongoQueryConverter(t *testing.T) {
-	for _, rawSql := range SELECT_LIST_ALL {
+	for _, rawSql := range SELECT_LIST {
 		fmt.Println(rawSql)
 		sqlParser := parser.NewMySQLSelectParser(rawSql, TableSchema)
 		sql, err := sqlParser.Parse()

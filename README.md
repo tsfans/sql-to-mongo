@@ -11,6 +11,7 @@ Convert SQL statement to mongo statement.
 ### Prerequisites
 
 - go version >= 1.21.4
+- mongo version >= 5.0
 
 ### Example
 

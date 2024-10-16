@@ -63,6 +63,7 @@ const (
 	Mongo_Operator_Push         = "$push"
 	Mongo_Operator_ArrayElemAt  = "$arrayElemAt"
 	Mongo_Operator_Split        = "$split"
+	Mongo_Operator_Date_Trunc   = "$dateTrunc"
 
 	Mongo_Arg_If       = "if"
 	Mongo_Arg_Then     = "then"
@@ -73,6 +74,8 @@ const (
 	Mongo_Arg_Case     = "case"
 	Mongo_Arg_Default  = "default"
 	Mongo_Arg_Missing  = "missing"
+	Mongo_Arg_Date     = "date"
+	Mongo_Arg_Unit     = "unit"
 )
 
 var (
@@ -855,6 +858,13 @@ func parseFieldValue(field parser.ExprField, right *parser.SQLTable, isReplace b
 				bson.M{Mongo_Operator_Split: bson.A{arg1, arg2}},
 				arg3,
 			}}
+		case parser.SQLFuncName_Date:
+			val = parseFieldValue(field.GetArgs()[0], right, isReplace)
+			val = bson.M{Mongo_Operator_Date_Trunc: map[string]any{
+				Mongo_Arg_Date: val,
+				Mongo_Arg_Unit: "day",
+			}}
+
 		}
 	case parser.SQLField_Type_Agg_Func:
 		switch field.GetFunc() {

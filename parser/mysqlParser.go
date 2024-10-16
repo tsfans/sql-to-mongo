@@ -63,6 +63,7 @@ const (
 	SQLFuncName_Max          string = "MAX"
 	SQLFuncName_Min          string = "MIN"
 	SQLFuncName_Json_Arr_Agg string = "JSON_ARRAYAGG"
+	SQLFuncName_Date         string = "DATE"
 
 	SQLFuncName_Json_Extract    string = "JSON_EXTRACT"
 	SQLFuncName_Year            string = "YEAR"
@@ -105,6 +106,7 @@ var (
 		SQLFuncName_To_Double:       SQLFuncName_To_Double,
 		SQLFuncName_To_Floor:        SQLFuncName_To_Floor,
 		SQLFuncName_Substring_Index: SQLFuncName_Substring_Index,
+		SQLFuncName_Date:            SQLFuncName_Date,
 	}
 )
 
@@ -1426,6 +1428,17 @@ func findColFromSchema(field ExprField, tableSchema map[string][]*Column) (match
 				return
 			}
 			matchCol = &Column{Type: String, Name: field.GetAsName()}
+		case SQLFuncName_Date:
+			if len(cols) != 1 {
+				err = fmt.Errorf(Func_Arg_Err_Msg, field.GetFunc(), 1, len(cols))
+				return
+			}
+			col := cols[0]
+			if col.Type != Datetime {
+				err = fmt.Errorf(Func_Arg_Type_Err_Msg, field.GetFunc(), col.Type, col.Name)
+				return
+			}
+			matchCol = &Column{Type: Datetime, Name: field.GetAsName()}
 		default:
 			err = fmt.Errorf("unsupport func [%v]", field.GetFunc())
 			return
