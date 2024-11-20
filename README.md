@@ -16,7 +16,7 @@ Convert SQL statement to mongo statement.
 ### Example
 
 ```shell
-  go get github.com/tsfans/sql-to-mongo@v1.0.4
+  go get github.com/tsfans/sql-to-mongo@v1.0.5
 ```
 
 ```go
