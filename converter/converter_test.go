@@ -237,7 +237,9 @@ var (
 	Floor              = "select id, floor(score) as score from homework where id > 0"
 	Substring_Index    = "select id, substring_index(address, '/', 0) as city from student where id > 0"
 	DateTruncate_Index = "select id, DATE(createdAt) as createdDate from student where id > 0"
-	SELECT_LIST        = []string{DateTruncate_Index}
+	Like               = "select id,salary from employee where age >= 35 and (designation = 'manager' or (lastname = 'johnson' and firstname like 'john%'))"
+	Like2              = "select * from process_user where userId like '%49410011392'"
+	SELECT_LIST        = []string{SELECT20}
 	SELECT_LIST_ALL    = []string{
 		If,
 		Case_When,
@@ -277,21 +279,30 @@ var (
 		SELECT30,
 		SELECT31,
 		SELECT32,
+		If,
+		Case_When,
+		Now,
+		To_Double,
+		Floor,
+		Substring_Index,
+		DateTruncate_Index,
+		Like,
+		Like2,
 	}
 )
 
 func TestMongoQueryConverter(t *testing.T) {
-	for _, rawSql := range SELECT_LIST {
+	for _, rawSql := range SELECT_LIST_ALL {
 		fmt.Println(rawSql)
 		sqlParser := parser.NewMySQLSelectParser(rawSql, TableSchema)
-		sql, err := sqlParser.Parse()
+		sql, err := sqlParser.Parse(false)
 		if err != nil {
 			t.Errorf("parse failed,err=%v", err.Error())
 			return
 		}
 		conv := NewMongoQueryConverter(sql, Source_View)
 		var query Query
-		query, err = conv.Convert()
+		query, err = conv.Convert(false)
 		if err != nil {
 			t.Errorf("convert failed,err=%v", err.Error())
 			return

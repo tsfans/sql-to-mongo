@@ -352,6 +352,13 @@ type BinaryOperation struct {
 	Not      bool
 }
 
+type PatternLike struct {
+	SQLField
+	Left  ExprField
+	Right ExprField
+	Not   bool
+}
+
 type CaseWhenExpr struct {
 	SQLField
 	WhenClauses []*WhenClause
@@ -408,17 +415,19 @@ func NewMySQLSelectParser(sql string, tableSchema map[string][]*Column) SelectPa
 	return &MySQLSelectParser{sql: sql, parser: tiParser.New(), tableSchema: tableSchema}
 }
 
-func (parser *MySQLSelectParser) Parse() (sql SQL, err error) {
-	err = parser.parse()
+func (parser *MySQLSelectParser) Parse(strictMode bool) (sql SQL, err error) {
+	err = parser.parse(strictMode)
 	if err != nil {
 		err = fmt.Errorf("parse sql failed,err=[%v],sql=[%v]", err.Error(), parser.sql)
 		return
 	}
 
-	err = parser.validate()
-	if err != nil {
-		err = fmt.Errorf("validate sql failed,err=[%v],sql=[%v]", err.Error(), parser.sql)
-		return
+	if strictMode {
+		err = parser.validate()
+		if err != nil {
+			err = fmt.Errorf("validate sql failed,err=[%v],sql=[%v]", err.Error(), parser.sql)
+			return
+		}
 	}
 
 	sql = parser.sqlSelect
@@ -426,7 +435,7 @@ func (parser *MySQLSelectParser) Parse() (sql SQL, err error) {
 	return
 }
 
-func (parser *MySQLSelectParser) parse() (err error) {
+func (parser *MySQLSelectParser) parse(strictMode bool) (err error) {
 	log.Debugf("original sql is [%v]", parser.sql)
 
 	var stmts []ast.StmtNode
@@ -453,10 +462,12 @@ func (parser *MySQLSelectParser) parse() (err error) {
 
 	parser.sqlSelect.SQL = &parser.sql
 
-	// 设置tableSchema
-	err = populateTableSchema(parser.sqlSelect.From, parser.tableSchema)
-	if err != nil {
-		return
+	if strictMode {
+		// 设置tableSchema
+		err = populateTableSchema(parser.sqlSelect.From, parser.tableSchema)
+		if err != nil {
+			return
+		}
 	}
 
 	return
@@ -930,6 +941,22 @@ func parserFieldExpr(node ast.ExprNode) (field ExprField, err error) {
 		}
 		caseWhen.WhenClauses = whenClauses
 		field = &caseWhen
+	case *ast.PatternLikeExpr:
+		var left ExprField
+		left, err = parserFieldExpr(exprNode.Expr)
+		if err != nil {
+			return
+		}
+		var right ExprField
+		right, err = parserFieldExpr(exprNode.Pattern)
+		if err != nil {
+			return
+		}
+		field = &PatternLike{
+			Left:  left,
+			Right: right,
+			Not:   exprNode.Not,
+		}
 	default:
 		err = fmt.Errorf("unknow exprNode type=%T", node)
 		return
@@ -1638,15 +1665,4 @@ func validateDuplicateSelectField(sqlSelect *SQLSelect) (err error) {
 
 func (parser *MySQLSelectParser) GetOriginalSQL() string {
 	return parser.sql
-}
-
-func (parser *MySQLSelectParser) GetStmt() (sqlSelect *SQLSelect, err error) {
-	if parser.sqlSelect == nil {
-		_, err = parser.Parse()
-		if err != nil {
-			return
-		}
-	}
-	sqlSelect = parser.sqlSelect
-	return
 }

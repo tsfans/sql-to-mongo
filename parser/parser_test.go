@@ -46,7 +46,7 @@ var (
 func TestParseMySQLSelect(t *testing.T) {
 	for idx := range SELECT_LIST {
 		sqlParser := NewMySQLSelectParser(SELECT_LIST[idx], TableSchema)
-		_, err := sqlParser.Parse()
+		_, err := sqlParser.Parse(true)
 		if err != nil {
 			t.Errorf("parse failed,err=%v", err.Error())
 		}

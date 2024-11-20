@@ -179,7 +179,7 @@ func NewMongoQueryConverter(sql parser.SQL, sourceView map[string]string) Select
 	return &MongoQueryConverter{sql: sql, sourceView: sourceView, validator: &MongoQueryConverterValidator{}}
 }
 
-func (conv *MongoQueryConverter) Convert() (query Query, err error) {
+func (conv *MongoQueryConverter) Convert(strictMode bool) (query Query, err error) {
 	if conv.sql == nil {
 		err = fmt.Errorf("no sql to convert")
 		return
@@ -197,7 +197,7 @@ func (conv *MongoQueryConverter) Convert() (query Query, err error) {
 	}
 
 	var startView string
-	startView, err = getStartView(sql.From, conv.sourceView)
+	startView, err = getStartView(sql.From, conv.sourceView, strictMode)
 	if err != nil {
 		return
 	}
@@ -205,7 +205,7 @@ func (conv *MongoQueryConverter) Convert() (query Query, err error) {
 	selectFields := getSelectFieldsFromSql(sql)
 
 	var pipeline bson.A
-	pipeline, err = buildPipeline(sql, conv.sourceView)
+	pipeline, err = buildPipeline(sql, conv.sourceView, strictMode)
 	if err != nil {
 		return
 	}
@@ -273,16 +273,20 @@ func getFieldsFromTable(table *parser.SQLTable) (cols []*parser.Column) {
 	return
 }
 
-func getStartView(table *parser.SQLTable, sourceView map[string]string) (startView string, err error) {
+func getStartView(table *parser.SQLTable, sourceView map[string]string, strictMode bool) (startView string, err error) {
 	if table.Left != nil && table.Left.Ref != nil {
-		startView, err = getStartView(table.Left.Ref.From, sourceView)
+		startView, err = getStartView(table.Left.Ref.From, sourceView, strictMode)
 		return
 	}
 	if table.Left.Name == nil {
-		startView, err = getStartView(table.Left, sourceView)
+		startView, err = getStartView(table.Left, sourceView, strictMode)
 		return
 	}
 	if _, ok := sourceView[*table.Left.Name]; !ok {
+		if !strictMode {
+			startView = *table.Left.Name
+			return
+		}
 		err = fmt.Errorf("can't find view with table %v", *table.Left.Name)
 		return
 	}
@@ -290,10 +294,10 @@ func getStartView(table *parser.SQLTable, sourceView map[string]string) (startVi
 	return
 }
 
-func buildPipeline(sql *parser.SQLSelect, sourceView map[string]string) (pipeline bson.A, err error) {
+func buildPipeline(sql *parser.SQLSelect, sourceView map[string]string, strictMode bool) (pipeline bson.A, err error) {
 	if sql.From.Left != nil && sql.From.Left.Ref != nil {
 		var subPipeline bson.A
-		subPipeline, err = buildPipeline(sql.From.Left.Ref, sourceView)
+		subPipeline, err = buildPipeline(sql.From.Left.Ref, sourceView, strictMode)
 		if err != nil {
 			return
 		}
@@ -307,7 +311,7 @@ func buildPipeline(sql *parser.SQLSelect, sourceView map[string]string) (pipelin
 		right := sql.From.Right
 		if right.Ref != nil {
 			var rightStartView string
-			rightStartView, err = getStartView(right.Ref.From, sourceView)
+			rightStartView, err = getStartView(right.Ref.From, sourceView, strictMode)
 			if err != nil {
 				return
 			}
@@ -318,7 +322,7 @@ func buildPipeline(sql *parser.SQLSelect, sourceView map[string]string) (pipelin
 				},
 			}
 			var nestedPipeline bson.A
-			nestedPipeline, err = buildPipeline(right.Ref, sourceView)
+			nestedPipeline, err = buildPipeline(right.Ref, sourceView, strictMode)
 			if err != nil {
 				return
 			}
@@ -339,9 +343,12 @@ func buildPipeline(sql *parser.SQLSelect, sourceView map[string]string) (pipelin
 					},
 				})
 		} else {
-			view := sourceView[*right.Name]
+			view := *right.Name
+			if strictMode {
+				view = sourceView[*right.Name]
+			}
 			if view == "" {
-				err = fmt.Errorf("can't find view with name [%v]", right.GetAsName())
+				err = fmt.Errorf("can't find view with name [%v]", *right.Name)
 				return
 			}
 			pipelineMatch := bson.M{
@@ -370,9 +377,7 @@ func buildPipeline(sql *parser.SQLSelect, sourceView map[string]string) (pipelin
 
 	if sql.Where != nil {
 		pipeline = append(pipeline, bson.M{
-			Mongo_Stage_Macth: bson.M{
-				Mongo_Operator_Expr: parseFieldValue(sql.Where, sql.From.Right, false),
-			},
+			Mongo_Stage_Macth: parseFieldValue(sql.Where, sql.From.Right, false),
 		})
 	}
 
@@ -425,9 +430,7 @@ func buildPipeline(sql *parser.SQLSelect, sourceView map[string]string) (pipelin
 
 		if sql.Having != nil {
 			pipeline = append(pipeline, bson.M{
-				Mongo_Stage_Macth: bson.M{
-					Mongo_Operator_Expr: parseFieldValue(sql.Having.(*parser.BinaryOperation), sql.From.Right, false),
-				},
+				Mongo_Stage_Macth: parseFieldValue(sql.Having.(*parser.BinaryOperation), sql.From.Right, false),
 			})
 		}
 	} else {
@@ -673,6 +676,11 @@ func getJoinOnField(joinOn parser.ExprField, rightTable *parser.SQLTable) (let b
 }
 
 func convertBinaryOperation(field parser.ExprField, rightTable *parser.SQLTable, isReplace bool) (match bson.M) {
+	if bo, ok := field.(*parser.PatternLike); ok {
+		// like表达式单独处理
+		match = convertPatternLike(bo, rightTable, isReplace)
+		return
+	}
 	var bo *parser.BinaryOperation
 	var ok bool
 	if bo, ok = field.(*parser.BinaryOperation); !ok {
@@ -691,24 +699,27 @@ func convertBinaryOperation(field parser.ExprField, rightTable *parser.SQLTable,
 		return
 	}
 	if *bo.Operator == opcode.In {
-		left := parseFieldValue(bo.Left, rightTable, isReplace)
 		var right bson.A
 		for _, arg := range bo.Right.GetArgs() {
 			right = append(right, parseFieldValue(arg, rightTable, isReplace))
 		}
-		match = bson.M{Mongo_Operator_In: bson.A{left, right}}
+		match = bson.M{Mongo_Operator_In: right}
 		if bo.Not {
 			match = bson.M{Mongo_Operator_Not: match}
 		}
+		match = bson.M{bo.Left.GetName(): match}
 		return
 	}
 
-	leftVal := parseFieldValue(bo.Left, rightTable, isReplace)
-	rightVal := parseFieldValue(bo.Right, rightTable, isReplace)
-	if *bo.Operator == opcode.Like {
-		rightVal = fmt.Sprintf(".*%v.*", rightVal)
+	left := bo.Left
+	right := bo.Right
+	if bo.Left.GetType() == parser.SQLField_Type_Value {
+		left = bo.Right
+		right = bo.Left
 	}
-	if bo.Left.GetColType() == parser.Datetime {
+	leftVal := parseFieldValue(left, rightTable, isReplace)
+	rightVal := parseFieldValue(right, rightTable, isReplace)
+	if left.GetColType() == parser.Datetime {
 		// 解析为时间
 		timeVal, err := ParseTime("", fmt.Sprint(rightVal))
 		if err != nil {
@@ -723,8 +734,8 @@ func convertBinaryOperation(field parser.ExprField, rightTable *parser.SQLTable,
 			// 字段不存在也认为是空
 			match = bson.M{
 				Mongo_Operator_Or: bson.A{
-					bson.M{Mongo_Operator_Eq: bson.A{leftVal, rightVal}},
-					bson.M{Mongo_Operator_Eq: bson.A{bson.M{Mongo_Operator_Type: leftVal}, Mongo_Arg_Missing}},
+					bson.M{left.GetName(): rightVal},
+					bson.M{Mongo_Operator_Expr: bson.M{Mongo_Operator_Eq: bson.A{bson.M{Mongo_Operator_Type: leftVal}, Mongo_Arg_Missing}}},
 				},
 			}
 			return
@@ -735,8 +746,8 @@ func convertBinaryOperation(field parser.ExprField, rightTable *parser.SQLTable,
 				// 可能是匹配布尔值
 				match = bson.M{
 					Mongo_Operator_Or: bson.A{
-						bson.M{Mongo_Operator_Eq: bson.A{leftVal, rightVal}},
-						bson.M{Mongo_Operator_Eq: bson.A{leftVal, intVal == 1}},
+						bson.M{left.GetName(): rightVal},
+						bson.M{left.GetName(): intVal == 1},
 					},
 				}
 				return
@@ -748,22 +759,55 @@ func convertBinaryOperation(field parser.ExprField, rightTable *parser.SQLTable,
 		// 字段不存在也认为是空
 		match = bson.M{
 			Mongo_Operator_And: bson.A{
-				bson.M{Mongo_Operator_Ne: bson.A{leftVal, rightVal}},
-				bson.M{Mongo_Operator_Ne: bson.A{bson.M{Mongo_Operator_Type: leftVal}, Mongo_Arg_Missing}},
+				bson.M{left.GetName(): bson.M{Mongo_Operator_Ne: rightVal}},
+				bson.M{Mongo_Operator_Expr: bson.M{Mongo_Operator_Ne: bson.A{bson.M{Mongo_Operator_Type: leftVal}, Mongo_Arg_Missing}}},
 			},
 		}
 		return
 	}
 
-	match = bson.M{Mongo_Binary_Operator_Mapping[*bo.Operator]: bson.A{leftVal, rightVal}}
+	match = bson.M{left.GetName(): bson.M{Mongo_Binary_Operator_Mapping[*bo.Operator]: rightVal}}
 
 	return
+}
+
+func convertPatternLike(like *parser.PatternLike, rightTable *parser.SQLTable, isReplace bool) (match bson.M) {
+	rightVal := parseFieldValue(like.Right, rightTable, isReplace)
+	if val, ok := rightVal.(string); ok {
+		rightVal = convertSQLPatternToMongo(val)
+	}
+	match = bson.M{like.Left.GetName(): bson.M{Mongo_Operator_Regex: rightVal}}
+	return
+}
+
+func convertSQLPatternToMongo(sqlPattern string) string {
+	// Escape MongoDB regex special characters
+	escaped := regexp.QuoteMeta(sqlPattern)
+
+	// Replace SQL wildcards with MongoDB equivalents
+	escaped = strings.ReplaceAll(escaped, "%", ".*") // '%' -> '.*'
+	escaped = strings.ReplaceAll(escaped, "_", ".")  // '_' -> '.'
+
+	// Add anchors for exact match, if required
+	if !strings.HasPrefix(sqlPattern, "%") {
+		escaped = "^" + escaped // Start anchor
+	}
+	if !strings.HasSuffix(sqlPattern, "%") {
+		escaped = escaped + "$" // End anchor
+	}
+
+	return escaped
 }
 
 func parseFieldValue(field parser.ExprField, right *parser.SQLTable, isReplace bool) (val any) {
 	if bo, ok := field.(*parser.BinaryOperation); ok {
 		// 二元表达式单独处理
 		val = convertBinaryOperation(bo, right, isReplace)
+		return
+	}
+	if bo, ok := field.(*parser.PatternLike); ok {
+		// like表达式单独处理
+		val = convertPatternLike(bo, right, isReplace)
 		return
 	}
 
