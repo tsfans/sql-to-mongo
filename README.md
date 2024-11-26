@@ -1,4 +1,4 @@
-For more information and to use the tool, please visit the [**SQL-to-Mongo Converter**](https://www.sqltomongo.online).
+For more information and to use the tool, please visit **https://www.sqltomongo.online**.
 
 # sql-to-mongo
 
